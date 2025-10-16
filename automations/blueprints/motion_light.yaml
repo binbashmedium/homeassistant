@@ -1,0 +1,147 @@
+blueprint:
+  name: Motion-activated Light (time & sun-based brightness)
+  description: >
+    Turn on a light when motion is detected.
+    Adjust brightness based on time range or when the sun is below the horizon.
+  domain: automation
+
+  input:
+    motion_entity:
+      name: Motion Sensor
+      selector:
+        entity:
+          filter:
+            domain: binary_sensor
+            device_class: motion
+
+    light_target:
+      name: Light
+      selector:
+        target:
+          entity:
+            domain: light
+
+    additional_conditions:
+      name: Additional conditions
+      description: Extra conditions you may want to add to this automation.
+      default: []
+      selector:
+        condition:
+
+    no_motion_wait:
+      name: Wait time
+      description: Time to leave the light on after last motion is detected.
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+    time_from:
+      name: Time - From
+      description: Start time for lower brightness period.
+      default: "22:30:00"
+      selector:
+        time:
+
+    time_to:
+      name: Time - To
+      description: End time for lower brightness period.
+      default: "06:00:00"
+      selector:
+        time:
+
+    dim_brightness:
+      name: Brightness during time range
+      description: Brightness level (0–100%) for lights during set time range.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: percent
+
+    sunset_brightness:
+      name: Brightness when sun is below horizon (outside time range)
+      description: Brightness level (0–100%) when sun is below horizon but outside the set time range.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: percent
+
+    sun_entity:
+      name: Sun entity
+      description: Usually "sun.sun"
+      default: sun.sun
+      selector:
+        entity:
+          filter:
+            domain: sun
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input motion_entity
+    from: "off"
+    to: "on"
+
+condition:
+  - condition: !input additional_conditions
+
+action:
+  - variables:
+      tf_str: !input time_from
+      tt_str: !input time_to
+      dim_brightness: !input dim_brightness
+      sunset_brightness: !input sunset_brightness
+      sun_entity: !input sun_entity
+      nowt: "{{ now().time() }}"
+      sun_state: "{{ states(sun_entity) }}"
+      in_time_range: >-
+        {% set nowt = now().time() %}
+        {% set t1 = strptime(tf_str, '%H:%M:%S').time() %}
+        {% set t2 = strptime(tt_str, '%H:%M:%S').time() %}
+        {% if t1 < t2 %}
+          {{ t1 <= nowt <= t2 }}
+        {% else %}
+          {{ nowt >= t1 or nowt <= t2 }}
+        {% endif %}
+      sun_below: "{{ sun_state == 'below_horizon' }}"
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ in_time_range }}"
+        sequence:
+          - service: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: "{{ dim_brightness }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ not in_time_range and sun_below }}"
+        sequence:
+          - service: light.turn_on
+            target: !input light_target
+            data:
+              brightness_pct: "{{ sunset_brightness }}"
+    default:
+      - service: light.turn_on
+        target: !input light_target
+
+  - wait_for_trigger:
+      - platform: state
+        entity_id: !input motion_entity
+        from: "on"
+        to: "off"
+
+  - delay: !input no_motion_wait
+
+  - service: light.turn_off
+    target: !input light_target
+    
