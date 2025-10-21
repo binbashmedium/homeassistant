@@ -227,6 +227,7 @@ class FinTsClient:
                     account.iban,
                     self.client.user_id,
                 )
+                balance_accounts.append(account)
 
         return balance_accounts, holdings_accounts
 
