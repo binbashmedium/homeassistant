@@ -102,6 +102,9 @@ def setup_platform(
             account_name = f"{fints_name} - {account.iban}"
         accounts.append(FinTsAccount(client, account, account_name))
         _LOGGER.warning("Creating account %s for bank %s", account.iban, fints_name)
+        expense_sensor = FinTsMonthlyExpensesSensor(client, account, fints_name)
+        accounts.append(expense_sensor)
+        _LOGGER.warning(">>> Added monthly expense sensor for %s", account.iban)
 
     for account in holdings_accounts:
         if config[CONF_HOLDINGS] and account.accountnumber not in holdings_config:
@@ -227,7 +230,7 @@ class FinTsClient:
                     tx_dict = vars(tx)
                     _LOGGER.warning(">>> TX keys: %s", list(tx_dict.keys()))
                     _LOGGER.warning(">>> TX values: %s", tx_dict)
-                 except Exception as err:
+                except Exception as err:
                     _LOGGER.error(">>> Could not inspect transaction: %s", err)
         except Exception as e:
             _LOGGER.error(">>> Error fetching transactions: %s", e)
@@ -302,6 +305,53 @@ class FinTsAccount(SensorEntity):
             _LOGGER.error(traceback.format_exc())
             self._attr_native_value = None
 
+
+class FinTsMonthlyExpensesSensor(SensorEntity):
+    """Sensor for monthly expenses from FinTS transactions."""
+
+    def __init__(self, client: FinTsClient, account, name: str, filter_text: str | None = None) -> None:
+        self._client = client
+        self._account = account
+        self._attr_name = f"{name} Monthly Expenses"
+        self._attr_icon = "mdi:calendar-month"
+        self._filter_text = filter_text
+        self._attr_native_unit_of_measurement = "EUR"
+        self._attr_extra_state_attributes = {
+            "account": self._account.iban,
+            "filter": self._filter_text or "all",
+        }
+
+    def update(self) -> None:
+        """Calculate monthly expenses."""
+        today = date.today()
+        first_day = today.replace(day=1)
+        bank = self._client.client
+
+        try:
+            transactions = bank.get_transactions(self._account, first_day, today)
+            total = 0.0
+            filtered = []
+
+            for tx in transactions:
+                amount = getattr(tx.amount, "amount", 0.0)
+                purpose = getattr(tx, "purpose", "")
+                if self._filter_text and self._filter_text.lower() not in purpose.lower():
+                    continue  # skip if not matching filter
+
+                if amount < 0:
+                    total += amount
+                    filtered.append(
+                        f"{getattr(tx, 'booking_date', '')}: {amount:.2f} {tx.amount.currency} - {purpose}"
+                    )
+
+            self._attr_native_value = abs(total)
+            self._attr_extra_state_attributes["transactions"] = filtered
+            self._attr_extra_state_attributes["count"] = len(filtered)
+            _LOGGER.warning(">>> Monthly expenses for %s: %.2f EUR", self._account.iban, abs(total))
+
+        except Exception as e:
+            _LOGGER.error(">>> Error calculating monthly expenses: %s", e)
+            self._attr_native_value = None
 
 
 
