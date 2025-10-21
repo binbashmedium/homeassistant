@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from datetime import date, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -213,13 +214,27 @@ class FinTsClient:
 
         return False
 
+
+    def get_recent_transactions(self, account):
+        """Try to fetch transactions for the past 7 days."""
+        start_date = date.today() - timedelta(days=7)
+        end_date = date.today()
+        try:
+            transactions = self.client.get_transactions(account, start_date, end_date)
+            _LOGGER.warning(">>> Found %d transactions for %s", len(transactions), account.iban)
+            for tx in transactions:
+                _LOGGER.warning("%s %s %s", tx.date, tx.amount, tx.text)
+            return transactions
+        except Exception as e:
+            _LOGGER.error(">>> Error fetching transactions: %s", e)
+            return []
+
     def detect_accounts(self) -> tuple[list, list]:
         """Identify the accounts of the bank."""
 
         balance_accounts = []
         holdings_accounts = []
         accounts = self.client.get_sepa_accounts()
-        _LOGGER.warning(">>> Creating %d FinTS sensors", len(accounts))
         for account in accounts:
             if self.is_balance_account(account):
                 balance_accounts.append(account)
@@ -232,7 +247,6 @@ class FinTsClient:
                     account.iban,
                     self.client.user_id,
                 )
-                balance_accounts.append(account)
 
         return balance_accounts, holdings_accounts
 
@@ -262,6 +276,7 @@ class FinTsAccount(SensorEntity):
         bank = self._client.client
         _LOGGER.warning(">>> Updating account %s", self._account.iban)
         try:
+            self._client.get_recent_transactions(self._account)
             balance = bank.get_balance(self._account)
             if balance is None:
                 _LOGGER.error(">>> No balance returned for %s", self._account.iban)
