@@ -28,12 +28,13 @@ SCAN_INTERVAL = timedelta(hours=4)
 
 ICON = "mdi:currency-eur"
 
-BankCredentials = namedtuple("BankCredentials", "blz login pin url")  # noqa: PYI024
+BankCredentials = namedtuple("BankCredentials", "blz login pin url product_id")
 
 CONF_BIN = "bank_identification_number"
 CONF_ACCOUNTS = "accounts"
 CONF_HOLDINGS = "holdings"
 CONF_ACCOUNT = "account"
+CONF_PRODUCT_ID = "product_id"
 
 ATTR_ACCOUNT = CONF_ACCOUNT
 ATTR_BANK = "bank"
@@ -52,6 +53,7 @@ PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PIN): cv.string,
         vol.Required(CONF_URL): cv.string,
+        vol.Optional(CONF_PRODUCT_ID): cv.string,          #  ← hinzugefügt
         vol.Optional(CONF_NAME): cv.string,
         vol.Optional(CONF_ACCOUNTS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
         vol.Optional(CONF_HOLDINGS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
@@ -70,8 +72,11 @@ def setup_platform(
     Login to the bank and get a list of existing accounts. Create a
     sensor for each account.
     """
-    credentials = BankCredentials(
-        config[CONF_BIN], config[CONF_USERNAME], config[CONF_PIN], config[CONF_URL]
+    credentials = BankCredentials(config[CONF_BIN],
+                                  config[CONF_USERNAME],
+                                  config[CONF_PIN],
+                                  config[CONF_URL],
+                                  config.get(CONF_PRODUCT_ID, None)
     )
     fints_name = cast(str, config.get(CONF_NAME, config[CONF_BIN]))
 
@@ -144,12 +149,12 @@ class FinTsClient:
         and stores bank capabilities. So caching the client is beneficial.
         """
 
-        return FinTS3PinTanClient(
-            self._credentials.blz,
-            self._credentials.login,
-            self._credentials.pin,
-            self._credentials.url,
-        )
+        return FinTS3PinTanClient(self._credentials.blz,
+                                 self._credentials.login,
+                                 self._credentials.pin,
+                                 self._credentials.url,
+                                 product_id=self._credentials.product_id,
+                                 )
 
     def get_account_information(self, iban: str) -> dict | None:
         """Get a dictionary of account IBANs as key and account information as value."""
