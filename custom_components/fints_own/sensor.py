@@ -293,38 +293,39 @@ class FinTsAccount(SensorEntity):
 
 from datetime import date
 from homeassistant.components.sensor import SensorEntity
-
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class FinTsMonthlyExpensesSensor(SensorEntity):
-    """Sensor for tracking monthly expenses via FinTS."""
+    """Sensor für monatliche Ausgaben über FinTS."""
 
     def __init__(self, client, account, name: str, exclude_filter: list[str] | None = None) -> None:
-        """Initialize the monthly expenses sensor."""
+        """Initialisierung."""
         self._client = client
         self._account = account
         self._attr_name = f"{name} Monthly Expenses"
         self._attr_icon = "mdi:cash-minus"
         self._attr_native_unit_of_measurement = "EUR"
-        self._exclude_filter = exclude_filter or []  # Buchungen, die NICHT gezählt werden sollen
+        self._exclude_filter = exclude_filter or []
+        self._attr_native_value = None
         self._attr_extra_state_attributes = {
             "account": self._account.iban,
             "excluded_keywords": self._exclude_filter,
+            "transaction_count": 0,
+            "transactions": [],
         }
-        self._attr_native_value = None
 
     def update(self) -> None:
-        """Fetch and calculate monthly expenses."""
+        """Hole und berechne die monatlichen Ausgaben."""
         today = date.today()
-        first_day = today.replace(day=1)
+        first_day = today.replace(day=1)  # immer dynamisch: 1. des aktuellen Monats
 
         try:
             transactions = self._client.client.get_transactions(self._account, first_day, today)
             total = 0.0
-            counted_transactions = []
+            parsed_transactions = []
 
             for tx in transactions:
                 data = getattr(tx, "data", None)
@@ -335,46 +336,71 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 if not amount_obj:
                     continue
 
-                # FinTS Amount-Objekt → Zahl & Währung
+                # Betrag und Währung
                 try:
                     amount = float(str(amount_obj.amount))
                 except Exception:
                     continue
                 currency = getattr(amount_obj, "currency", "EUR")
 
-                # Beschreibung & Zweck
+                # Metadaten
                 purpose = (data.get("purpose") or "").strip()
                 name = (data.get("applicant_name") or "").strip()
+                from datetime import datetime
+                import re
 
-                # Filter anwenden → Buchungen, die den Filter enthalten, werden ignoriert
+                # Versuch 1: direktes Feld
+                date_val = data.get("date") or data.get("valutadate")
+
+                # Versuch 2: String → Datumsformat normalisieren
+                if isinstance(date_val, (datetime, date)):
+                    date_str = date_val.strftime("%Y-%m-%d")
+                elif isinstance(date_val, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_val):
+                    date_str = date_val
+                else:
+                 # Versuch 3: Datum aus purpose extrahieren (z. B. „KAUFUMSATZ14.10“)
+                    match = re.search(r"(\d{2}\.\d{2})", purpose)
+                    if match:
+                       day, month = match.group(1).split(".")
+                       year = today.year
+                       date_str = f"{year}-{month}-{day}"
+                    else:
+                       date_str = None
+
+                # Filter: Ignorierte Buchungen
                 if any(ex.lower() in (purpose + name).lower() for ex in self._exclude_filter):
                     continue
 
                 # Nur Ausgaben (negative Beträge)
                 if amount < 0:
                     total += amount
-                    date_val = getattr(data.get("date"), "date", None)
-                    counted_transactions.append(
-                        f"{date_val}: {abs(amount):.2f} {currency} - {name or 'Unbekannt'} - {purpose[:60]}"
-                    )
+                    parsed_transactions.append({
+                        "date": str(date_val),
+                        "amount": abs(amount),
+                        "currency": currency,
+                        "name": name or "Unbekannt",
+                        "purpose": purpose[:120],
+                    })
 
-            # Sensorwert aktualisieren
+            # Ergebnisse in Sensor schreiben
             self._attr_native_value = abs(total)
-            self._attr_extra_state_attributes["transaction_count"] = len(counted_transactions)
-            self._attr_extra_state_attributes["transactions"] = counted_transactions
+            self._attr_extra_state_attributes.update({
+                "transaction_count": len(parsed_transactions),
+                "transactions": parsed_transactions,
+            })
 
-            _LOGGER.warning(
-                ">>> Monthly expenses for %s: %.2f EUR (%d transactions)",
+            _LOGGER.info(
+                ">>> FinTS: %d Ausgaben für %s (%.2f EUR gesamt)",
+                len(parsed_transactions),
                 self._account.iban,
                 abs(total),
-                len(counted_transactions),
             )
 
         except Exception as e:
-            _LOGGER.error(">>> Error calculating monthly expenses: %s", e)
+            import traceback
+            _LOGGER.error(">>> Fehler bei Ausgaben-Ermittlung für %s: %s", self._account.iban, e)
+            _LOGGER.debug(traceback.format_exc())
             self._attr_native_value = None
-
-
 
 
 class FinTsHoldingsAccount(SensorEntity):
