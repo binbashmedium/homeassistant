@@ -102,7 +102,12 @@ def setup_platform(
             account_name = f"{fints_name} - {account.iban}"
         accounts.append(FinTsAccount(client, account, account_name))
         _LOGGER.warning("Creating account %s for bank %s", account.iban, fints_name)
-        expense_sensor = FinTsMonthlyExpensesSensor(client, account, fints_name)
+        expense_sensor = FinTsMonthlyExpensesSensor(
+            client,
+            account,
+            fints_name,
+            exclude_filter=["Miete"],  # Beispiel
+        )
         accounts.append(expense_sensor)
         _LOGGER.warning(">>> Added monthly expense sensor for %s", account.iban)
 
@@ -217,25 +222,6 @@ class FinTsClient:
 
         return False
 
-
-    def get_recent_transactions(self, account):
-        """Try to fetch transactions for the past 7 days."""
-        start_date = date.today() - timedelta(days=7)
-        end_date = date.today()
-        try:
-            transactions = self.client.get_transactions(account, start_date, end_date)
-            _LOGGER.warning(">>> Found %d transactions for %s", len(transactions), account.iban)
-            for tx in transactions:
-                try:
-                    tx_dict = vars(tx)
-                    _LOGGER.warning(">>> TX keys: %s", list(tx_dict.keys()))
-                    _LOGGER.warning(">>> TX values: %s", tx_dict)
-                except Exception as err:
-                    _LOGGER.error(">>> Could not inspect transaction: %s", err)
-        except Exception as e:
-            _LOGGER.error(">>> Error fetching transactions: %s", e)
-            return []
-
     def detect_accounts(self) -> tuple[list, list]:
         """Identify the accounts of the bank."""
 
@@ -283,7 +269,6 @@ class FinTsAccount(SensorEntity):
         bank = self._client.client
         _LOGGER.warning(">>> Updating account %s", self._account.iban)
         try:
-            self._client.get_recent_transactions(self._account)
             balance = bank.get_balance(self._account)
             if balance is None:
                 _LOGGER.error(">>> No balance returned for %s", self._account.iban)
@@ -306,52 +291,88 @@ class FinTsAccount(SensorEntity):
             self._attr_native_value = None
 
 
-class FinTsMonthlyExpensesSensor(SensorEntity):
-    """Sensor for monthly expenses from FinTS transactions."""
+from datetime import date
+from homeassistant.helpers.entity import Entity
+import logging
 
-    def __init__(self, client: FinTsClient, account, name: str, filter_text: str | None = None) -> None:
+_LOGGER = logging.getLogger(__name__)
+
+
+class FinTsMonthlyExpensesSensor(Entity):
+    """Sensor for tracking monthly expenses via FinTS."""
+
+    def __init__(self, client, account, name: str, exclude_filter: list[str] | None = None) -> None:
+        """Initialize the monthly expenses sensor."""
         self._client = client
         self._account = account
         self._attr_name = f"{name} Monthly Expenses"
-        self._attr_icon = "mdi:calendar-month"
-        self._filter_text = filter_text
+        self._attr_icon = "mdi:cash-minus"
         self._attr_native_unit_of_measurement = "EUR"
+        self._exclude_filter = exclude_filter or []  # Buchungen, die NICHT gezählt werden sollen
         self._attr_extra_state_attributes = {
             "account": self._account.iban,
-            "filter": self._filter_text or "all",
+            "excluded_keywords": self._exclude_filter,
         }
+        self._attr_native_value = None
 
     def update(self) -> None:
-        """Calculate monthly expenses."""
+        """Fetch and calculate monthly expenses."""
         today = date.today()
         first_day = today.replace(day=1)
-        bank = self._client.client
 
         try:
-            transactions = bank.get_transactions(self._account, first_day, today)
+            transactions = self._client.client.get_transactions(self._account, first_day, today)
             total = 0.0
-            filtered = []
+            counted_transactions = []
 
             for tx in transactions:
-                amount = getattr(tx.amount, "amount", 0.0)
-                purpose = getattr(tx, "purpose", "")
-                if self._filter_text and self._filter_text.lower() not in purpose.lower():
-                    continue  # skip if not matching filter
+                data = getattr(tx, "data", None)
+                if not data:
+                    continue
 
+                amount_obj = data.get("amount")
+                if not amount_obj:
+                    continue
+
+                # FinTS Amount-Objekt → Zahl & Währung
+                try:
+                    amount = float(str(amount_obj.amount))
+                except Exception:
+                    continue
+                currency = getattr(amount_obj, "currency", "EUR")
+
+                # Beschreibung & Zweck
+                purpose = (data.get("purpose") or "").strip()
+                name = (data.get("applicant_name") or "").strip()
+
+                # Filter anwenden → Buchungen, die den Filter enthalten, werden ignoriert
+                if any(ex.lower() in (purpose + name).lower() for ex in self._exclude_filter):
+                    continue
+
+                # Nur Ausgaben (negative Beträge)
                 if amount < 0:
                     total += amount
-                    filtered.append(
-                        f"{getattr(tx, 'booking_date', '')}: {amount:.2f} {tx.amount.currency} - {purpose}"
+                    date_val = getattr(data.get("date"), "date", None)
+                    counted_transactions.append(
+                        f"{date_val}: {abs(amount):.2f} {currency} - {name or 'Unbekannt'} - {purpose[:60]}"
                     )
 
+            # Sensorwert aktualisieren
             self._attr_native_value = abs(total)
-            self._attr_extra_state_attributes["transactions"] = filtered
-            self._attr_extra_state_attributes["count"] = len(filtered)
-            _LOGGER.warning(">>> Monthly expenses for %s: %.2f EUR", self._account.iban, abs(total))
+            self._attr_extra_state_attributes["transaction_count"] = len(counted_transactions)
+            self._attr_extra_state_attributes["transactions"] = counted_transactions
+
+            _LOGGER.warning(
+                ">>> Monthly expenses for %s: %.2f EUR (%d transactions)",
+                self._account.iban,
+                abs(total),
+                len(counted_transactions),
+            )
 
         except Exception as e:
             _LOGGER.error(">>> Error calculating monthly expenses: %s", e)
             self._attr_native_value = None
+
 
 
 
