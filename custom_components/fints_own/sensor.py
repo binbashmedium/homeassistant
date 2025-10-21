@@ -223,9 +223,12 @@ class FinTsClient:
             transactions = self.client.get_transactions(account, start_date, end_date)
             _LOGGER.warning(">>> Found %d transactions for %s", len(transactions), account.iban)
             for tx in transactions:
-                tx_dict = vars(tx)
-                _LOGGER.warning(">>> TX: %s", tx_dict)
-            return transactions
+                try:
+                    tx_dict = vars(tx)
+                    _LOGGER.warning(">>> TX keys: %s", list(tx_dict.keys()))
+                    _LOGGER.warning(">>> TX values: %s", tx_dict)
+                 except Exception as err:
+                    _LOGGER.error(">>> Could not inspect transaction: %s", err)
         except Exception as e:
             _LOGGER.error(">>> Error fetching transactions: %s", e)
             return []
