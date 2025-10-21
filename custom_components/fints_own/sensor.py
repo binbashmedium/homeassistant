@@ -119,6 +119,11 @@ def setup_platform(
             "Creating holdings %s for bank %s", account.accountnumber, fints_name
         )
 
+    # Log all sensor names before adding them to Home Assistant
+    for sensor in accounts:
+        _LOGGER.warning(">>> Created sensor entity: %s (IBAN: %s)", sensor.name, sensor._account.iban)
+
+    _LOGGER.warning(">>> Adding %d FinTS sensor entities", len(accounts))
     add_entities(accounts, True)
 
 
@@ -266,7 +271,7 @@ class FinTsAccount(SensorEntity):
                           self._account.iban,
                           balance.amount.amount,
                           balance.amount.currency)
-         except Exception as e:
+        except Exception as e:
             _LOGGER.error(">>> Error updating %s: %s", self._account.iban, e)
 
 
