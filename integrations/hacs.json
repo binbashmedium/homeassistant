@@ -1,0 +1,5 @@
+{
+  "name": "FinTS (Custom)",
+  "render_readme": true,
+  "domains": ["fints_own"]
+}
