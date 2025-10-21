@@ -106,7 +106,7 @@ def setup_platform(
             client,
             account,
             fints_name,
-            exclude_filter=["Miete"],  # Beispiel
+            exclude_filter=["Miete", "Rundfunk", "OCTOPUS", "Telekom"],  # Beispiel
         )
         accounts.append(expense_sensor)
         _LOGGER.warning(">>> Added monthly expense sensor for %s", account.iban)
