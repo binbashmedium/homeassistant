@@ -223,7 +223,8 @@ class FinTsClient:
             transactions = self.client.get_transactions(account, start_date, end_date)
             _LOGGER.warning(">>> Found %d transactions for %s", len(transactions), account.iban)
             for tx in transactions:
-                _LOGGER.warning("%s %s %s", tx.date, tx.amount, tx.text)
+                tx_dict = vars(tx)
+                _LOGGER.warning(">>> TX: %s", tx_dict)
             return transactions
         except Exception as e:
             _LOGGER.error(">>> Error fetching transactions: %s", e)
