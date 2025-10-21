@@ -62,10 +62,10 @@ PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
 
 
 def setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+        hass: HomeAssistant,
+        config: ConfigType,
+        add_entities: AddEntitiesCallback,
+        discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the sensors.
 
@@ -77,7 +77,7 @@ def setup_platform(
                                   config[CONF_PIN],
                                   config[CONF_URL],
                                   config.get(CONF_PRODUCT_ID, None)
-    )
+                                  )
     fints_name = cast(str, config.get(CONF_NAME, config[CONF_BIN]))
 
     account_config = {
@@ -90,6 +90,8 @@ def setup_platform(
 
     client = FinTsClient(credentials, fints_name, account_config, holdings_config)
     balance_accounts, holdings_accounts = client.detect_accounts()
+    _LOGGER.warning(">>> Found %d balance accounts", len(balance_accounts))
+    _LOGGER.warning(">>> Found %d holding accounts", len(holdings_accounts))
     accounts: list[SensorEntity] = []
 
     for account in balance_accounts:
@@ -127,11 +129,11 @@ class FinTsClient:
     """
 
     def __init__(
-        self,
-        credentials: BankCredentials,
-        name: str,
-        account_config: dict,
-        holdings_config: dict,
+            self,
+            credentials: BankCredentials,
+            name: str,
+            account_config: dict,
+            holdings_config: dict,
     ) -> None:
         """Initialize a FinTsClient."""
         self._credentials = credentials
@@ -150,11 +152,11 @@ class FinTsClient:
         """
 
         return FinTS3PinTanClient(self._credentials.blz,
-                                 self._credentials.login,
-                                 self._credentials.pin,
-                                 self._credentials.url,
-                                 product_id=self._credentials.product_id,
-                                 )
+                                  self._credentials.login,
+                                  self._credentials.pin,
+                                  self._credentials.url,
+                                  product_id=self._credentials.product_id,
+                                  )
 
     def get_account_information(self, iban: str) -> dict | None:
         """Get a dictionary of account IBANs as key and account information as value."""
@@ -181,8 +183,8 @@ class FinTsClient:
             return 1 <= account_type <= 9
 
         if (
-            account_information["iban"] in self.account_config
-            or account_information["account_number"] in self.account_config
+                account_information["iban"] in self.account_config
+                or account_information["account_number"] in self.account_config
         ):
             return True
 
@@ -201,8 +203,8 @@ class FinTsClient:
             return 30 <= account_type <= 39
 
         if (
-            account_information["iban"] in self.holdings_config
-            or account_information["account_number"] in self.holdings_config
+                account_information["iban"] in self.holdings_config
+                or account_information["account_number"] in self.holdings_config
         ):
             return True
 
@@ -213,11 +215,11 @@ class FinTsClient:
 
         balance_accounts = []
         holdings_accounts = []
-
-        for account in self.client.get_sepa_accounts():
+        accounts = self.client.get_sepa_accounts()
+        _LOGGER.warning(">>> Creating %d FinTS sensors", len(accounts))
+        for account in accounts:
             if self.is_balance_account(account):
                 balance_accounts.append(account)
-
             elif self.is_holdings_account(account):
                 holdings_accounts.append(account)
 
