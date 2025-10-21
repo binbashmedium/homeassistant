@@ -110,6 +110,13 @@ def setup_platform(
         )
         accounts.append(expense_sensor)
         _LOGGER.warning(">>> Added monthly expense sensor for %s", account.iban)
+        yearly_summary = FinTsYearlySummarySensor(client,
+                                                  account,
+                                                  fints_name,
+                                                  exclude_filter=["Miete", "Rundfunk", "OCTOPUS", "Telekom"]
+                                                  )
+        accounts.append(yearly_summary)
+        _LOGGER.warning(">>> Added yearly summary sensor for %s", account.iban)
 
     for account in holdings_accounts:
         if config[CONF_HOLDINGS] and account.accountnumber not in holdings_config:
@@ -127,8 +134,12 @@ def setup_platform(
         )
 
     # Log all sensor names before adding them to Home Assistant
+
     for sensor in accounts:
-        _LOGGER.warning(">>> Created sensor entity: %s (IBAN: %s)", sensor.name, sensor._account.iban)
+        if hasattr(sensor, "_account"):
+            _LOGGER.warning(">>> Created sensor entity: %s (IBAN: %s)", sensor.name, sensor._account.iban)
+        else:
+            _LOGGER.warning(">>> Created sensor entity: %s", sensor.name)
 
     _LOGGER.warning(">>> Adding %d FinTS sensor entities", len(accounts))
     add_entities(accounts, True)
@@ -400,6 +411,71 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
             import traceback
             _LOGGER.error(">>> Fehler bei Ausgaben-Ermittlung für %s: %s", self._account.iban, e)
             _LOGGER.debug(traceback.format_exc())
+            self._attr_native_value = None
+
+from datetime import datetime
+from homeassistant.components.sensor import SensorEntity
+
+class FinTsYearlySummarySensor(SensorEntity):
+    """Aggregiert alle Ausgaben des laufenden Jahres direkt über FinTS."""
+
+    def __init__(self, client, account, name: str, exclude_filter=None):
+        self._client = client
+        self._account = account
+        self._attr_name = f"{name} Yearly Summary"
+        self._attr_icon = "mdi:chart-bar"
+        self._attr_native_unit_of_measurement = "EUR"
+        self._attr_native_value = None
+        self._exclude_filter = exclude_filter or []
+        self._attr_extra_state_attributes = {}
+
+    def update(self):
+        from datetime import date
+        today = date.today()
+        first_of_year = today.replace(month=1, day=1)
+
+        try:
+            transactions = self._client.client.get_transactions(
+                self._account, first_of_year, today
+            )
+
+            totals = {}
+            for tx in transactions:
+                data = getattr(tx, "data", None)
+                if not data:
+                    continue
+                amount_obj = data.get("amount")
+                if not amount_obj:
+                    continue
+                amount = float(str(amount_obj.amount))
+                purpose = (data.get("purpose") or "").lower()
+                name = (data.get("applicant_name") or "").lower()
+
+                # Filter ignorieren
+                if any(ex.lower() in (purpose + name) for ex in self._exclude_filter):
+                    continue
+
+                # Nur Ausgaben zählen
+                if amount < 0:
+                    tx_date = data.get("date") or today
+                    month_key = f"{tx_date.year}-{tx_date.month:02d}"
+                    totals[month_key] = totals.get(month_key, 0) + abs(amount)
+
+            total_year = sum(totals.values())
+            current_month_key = f"{today.year}-{today.month:02d}"
+            current_month_total = totals.get(current_month_key, 0)
+
+            self._attr_native_value = round(total_year, 2)
+            self._attr_extra_state_attributes = {
+                "current_year": today.year,
+                "current_month": round(current_month_total, 2),
+                "total_year": round(total_year, 2),
+                "months": {k: round(v, 2) for k, v in sorted(totals.items())},
+            }
+        except Exception as e:
+            import traceback
+            _LOGGER.error(">>> Error calculating yearly summary: %s", e)
+            _LOGGER.error(traceback.format_exc())
             self._attr_native_value = None
 
 
