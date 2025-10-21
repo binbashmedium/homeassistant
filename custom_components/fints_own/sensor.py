@@ -96,17 +96,17 @@ def setup_platform(
 
     for account in balance_accounts:
         if config[CONF_ACCOUNTS] and account.iban not in account_config:
-            _LOGGER.debug("Skipping account %s for bank %s", account.iban, fints_name)
+            _LOGGER.warning("Skipping account %s for bank %s", account.iban, fints_name)
             continue
 
         if not (account_name := account_config.get(account.iban)):
             account_name = f"{fints_name} - {account.iban}"
         accounts.append(FinTsAccount(client, account, account_name))
-        _LOGGER.debug("Creating account %s for bank %s", account.iban, fints_name)
+        _LOGGER.warning("Creating account %s for bank %s", account.iban, fints_name)
 
     for account in holdings_accounts:
         if config[CONF_HOLDINGS] and account.accountnumber not in holdings_config:
-            _LOGGER.debug(
+            _LOGGER.warning(
                 "Skipping holdings %s for bank %s", account.accountnumber, fints_name
             )
             continue
@@ -115,7 +115,7 @@ def setup_platform(
         if not account_name:
             account_name = f"{fints_name} - {account.accountnumber}"
         accounts.append(FinTsHoldingsAccount(client, account, account_name))
-        _LOGGER.debug(
+        _LOGGER.warning(
             "Creating holdings %s for bank %s", account.accountnumber, fints_name
         )
 
@@ -257,10 +257,18 @@ class FinTsAccount(SensorEntity):
     def update(self) -> None:
         """Get the current balance and currency for the account."""
         bank = self._client.client
-        balance = bank.get_balance(self._account)
-        self._attr_native_value = balance.amount.amount
-        self._attr_native_unit_of_measurement = balance.amount.currency
-        _LOGGER.debug("updated balance of account %s", self.name)
+        _LOGGER.warning(">>> Updating account %s", self._account.iban)
+        try:
+            balance = bank.get_balance(self._account)
+            self._attr_native_value = balance.amount.amount
+            self._attr_native_unit_of_measurement = balance.amount.currency
+            _LOGGER.warning(">>> Balance for %s: %.2f %s",
+                          self._account.iban,
+                          balance.amount.amount,
+                          balance.amount.currency)
+         except Exception as e:
+            _LOGGER.error(">>> Error updating %s: %s", self._account.iban, e)
+
 
 
 class FinTsHoldingsAccount(SensorEntity):
