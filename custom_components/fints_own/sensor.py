@@ -90,8 +90,6 @@ def setup_platform(
 
     client = FinTsClient(credentials, fints_name, account_config, holdings_config)
     balance_accounts, holdings_accounts = client.detect_accounts()
-    _LOGGER.warning(">>> Found %d balance accounts", len(balance_accounts))
-    _LOGGER.warning(">>> Found %d holding accounts", len(holdings_accounts))
     accounts: list[SensorEntity] = []
 
     for account in balance_accounts:
@@ -265,14 +263,26 @@ class FinTsAccount(SensorEntity):
         _LOGGER.warning(">>> Updating account %s", self._account.iban)
         try:
             balance = bank.get_balance(self._account)
+            if balance is None:
+                _LOGGER.error(">>> No balance returned for %s", self._account.iban)
+                self._attr_native_value = None
+                return
+
             self._attr_native_value = balance.amount.amount
             self._attr_native_unit_of_measurement = balance.amount.currency
-            _LOGGER.warning(">>> Balance for %s: %.2f %s",
-                          self._account.iban,
-                          balance.amount.amount,
-                          balance.amount.currency)
+            _LOGGER.warning(
+                ">>> Balance for %s: %.2f %s",
+                self._account.iban,
+                balance.amount.amount,
+                balance.amount.currency,
+            )
+
         except Exception as e:
+            import traceback
             _LOGGER.error(">>> Error updating %s: %s", self._account.iban, e)
+            _LOGGER.error(traceback.format_exc())
+            self._attr_native_value = None
+
 
 
 
