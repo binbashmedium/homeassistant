@@ -292,13 +292,14 @@ class FinTsAccount(SensorEntity):
 
 
 from datetime import date
-from homeassistant.helpers.entity import Entity
+from homeassistant.components.sensor import SensorEntity
+
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class FinTsMonthlyExpensesSensor(Entity):
+class FinTsMonthlyExpensesSensor(SensorEntity):
     """Sensor for tracking monthly expenses via FinTS."""
 
     def __init__(self, client, account, name: str, exclude_filter: list[str] | None = None) -> None:
