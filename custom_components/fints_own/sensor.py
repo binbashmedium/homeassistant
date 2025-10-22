@@ -40,6 +40,7 @@ CONF_PRODUCT_ID = "product_id"
 ATTR_ACCOUNT = CONF_ACCOUNT
 ATTR_BANK = "bank"
 ATTR_ACCOUNT_TYPE = "account_type"
+EXCLUDE_KEYWORDS = "exclude_keywords"
 
 SCHEMA_ACCOUNTS = vol.Schema(
     {
@@ -58,6 +59,7 @@ PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_NAME): cv.string,
         vol.Optional(CONF_ACCOUNTS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
         vol.Optional(CONF_HOLDINGS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
+        vol.Optional(EXCLUDE_KEYWORDS, default=[]): cv.ensure_list(cv.string),
     }
 )
 
@@ -101,15 +103,15 @@ def setup_platform(
         if not (account_name := account_config.get(account.iban)):
             account_name = f"{fints_name} - {account.iban}"
         accounts.append(FinTsAccount(client, account, account_name))
-        _LOGGER.warning("Creating account %s for bank %s", account.iban, fints_name)
+        _LOGGER.info("Creating account %s for bank %s", account.iban, fints_name)
         expense_sensor = FinTsMonthlyExpensesSensor(
             client,
             account,
             fints_name,
-            exclude_filter=["Miete", "Rundfunk", "OCTOPUS", "Telekom"],  # Beispiel
+            exclude_filter=config.get(EXCLUDE_KEYWORDS, []),
         )
         accounts.append(expense_sensor)
-        _LOGGER.warning(">>> Added monthly expense sensor for %s", account.iban)
+        _LOGGER.info(">>> Added monthly expense sensor for %s", account.iban)
 
     for account in holdings_accounts:
         if config[CONF_HOLDINGS] and account.accountnumber not in holdings_config:
@@ -130,11 +132,11 @@ def setup_platform(
 
     for sensor in accounts:
         if hasattr(sensor, "_account"):
-            _LOGGER.warning(">>> Created sensor entity: %s (IBAN: %s)", sensor.name, sensor._account.iban)
+            _LOGGER.info(">>> Created sensor entity: %s (IBAN: %s)", sensor.name, sensor._account.iban)
         else:
-            _LOGGER.warning(">>> Created sensor entity: %s", sensor.name)
+            _LOGGER.info(">>> Created sensor entity: %s", sensor.name)
 
-    _LOGGER.warning(">>> Adding %d FinTS sensor entities", len(accounts))
+    _LOGGER.info(">>> Adding %d FinTS sensor entities", len(accounts))
     add_entities(accounts, True)
 
 
