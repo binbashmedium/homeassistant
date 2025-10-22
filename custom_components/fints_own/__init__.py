@@ -3,7 +3,7 @@ from pathlib import Path
 import base64, re, logging
 
 _LOGGER = logging.getLogger(__name__)
-DOMAIN = "shopping_ocr"
+DOMAIN = "fints_own"
 
 UPLOAD_DIR = Path("/config/www/receipts_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -27,4 +27,4 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
     hass.services.async_register(DOMAIN, "upload_image", handle_upload)
     return True
-  
+
