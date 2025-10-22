@@ -273,7 +273,7 @@ class FinTsAccount(SensorEntity):
     def update(self) -> None:
         """Get the current balance and currency for the account."""
         bank = self._client.client
-        _LOGGER.warning(">>> Updating account %s", self._account.iban)
+        _LOGGER.info(">>> Updating account %s", self._account.iban)
         try:
             balance = bank.get_balance(self._account)
             if balance is None:
@@ -283,7 +283,7 @@ class FinTsAccount(SensorEntity):
 
             self._attr_native_value = balance.amount.amount
             self._attr_native_unit_of_measurement = balance.amount.currency
-            _LOGGER.warning(
+            _LOGGER.info(
                 ">>> Balance for %s: %.2f %s",
                 self._account.iban,
                 balance.amount.amount,
