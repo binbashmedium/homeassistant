@@ -1,0 +1,11 @@
+upload_image:
+  name: "Bild hochladen"
+  description: "Speichert ein vom Frontend übergebenes Base64-Bild im Upload-Ordner."
+  fields:
+    filename:
+      description: "Dateiname, z. B. kassenzettel.jpg"
+      example: "receipt.jpg"
+    image_data:
+      description: "Base64-codierter Inhalt des Bildes"
+      example: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+      
