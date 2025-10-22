@@ -1,4 +1,7 @@
 # FinTS (Custom) implementierung
+Basiert auf https://www.home-assistant.io/integrations/fints/ (https://github.com/home-assistant/core/tree/dev/homeassistant/components/fints), 
+da jedoch die aktuelle implementierung keine product_id unterstützt wurde diese custom_component erstellt. 
+
 ## Sensoren
 
 Erstellt werden die Sensoren:
