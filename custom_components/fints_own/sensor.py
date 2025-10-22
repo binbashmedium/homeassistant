@@ -25,7 +25,7 @@ from datetime import date, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = timedelta(hours=4)
+SCAN_INTERVAL = timedelta(hours=1)
 
 ICON = "mdi:currency-eur"
 
