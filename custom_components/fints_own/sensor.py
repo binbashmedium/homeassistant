@@ -329,7 +329,7 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
         first_day = today.replace(day=1)  # immer dynamisch: 1. des aktuellen Monats
 
         try:
-            transactions = self._client.client.get_transactions(self._account, first_day, today, include_pending=True)
+            transactions = self._client.client.get_transactions(self._account, first_day, today, True)
             total = 0.0
             parsed_transactions = []
 
