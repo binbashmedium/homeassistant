@@ -1,7 +1,0 @@
-{
-  "domain": "shopping_ocr",
-  "name": "Shopping OCR",
-  "version": "1.0.0",
-  "codeowners": ["@you"],
-  "requirements": []
-}

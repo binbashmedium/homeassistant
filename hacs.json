@@ -1,5 +1,5 @@
 {
   "name": "Monatskostenverwaltung",
   "render_readme": true,
-  "domains": ["fints_own", "shopping_ocr"]
+  "domains": ["fints_own"]
 }
