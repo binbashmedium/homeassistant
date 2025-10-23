@@ -11,6 +11,36 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RECEIPTS_DB = Path("/config/custom_components/fints_own/receipts.json")
 
 
+def _find_receipt_for(amount: float, store: str | None = None) -> dict | None:
+    receipts = _load_receipts()
+    if not receipts:
+        return None
+
+    AMOUNT_TOL = 0.05
+    MIN_STORE_SIM = 0.4
+
+    best = None
+    best_score = 0.0
+
+    for r in receipts:
+        if abs(r.get("total", 0) - amount) > AMOUNT_TOL:
+            continue
+
+        score = 1.0 - abs(r.get("total", 0) - amount)
+
+        # optional Store matching
+        if store:
+            sim = _token_overlap(store, r.get("store", ""))
+            if sim < MIN_STORE_SIM:
+                continue
+            score += sim
+
+        if score > best_score:
+            best = r
+            best_score = score
+
+    return best
+
 def _norm(s: str) -> str:
     # einfache Normalisierung: lower, accents raus, Sonderzeichen → Space, Multi-Spaces → 1 Space
     s = (s or "").lower()
