@@ -18,11 +18,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         filename = call.data.get("filename", "upload.jpg")
         data_uri = call.data.get("image_data", "")
 
-        # Extrahiere Base64-Daten aus data:image/...;base64,
-        match = re.match(r"^data:image/\\w+;base64,(.*)", data_uri)
+        # Extract Base64 data from data:image/...;base64,
+        match = re.match(r"^data:image/\w+;base64,(.*)", data_uri)
         if not match:
-            _LOGGER.error("Ungültige Bilddaten empfangen")
+            _LOGGER.error("Ungültige Bilddaten empfangen. Erhaltene Daten beginnen mit: %s", data_uri[:50])
             return
+
 
         try:
             image_bytes = base64.b64decode(match.group(1))
