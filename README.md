@@ -31,3 +31,14 @@ sensor:
       - account: !secret bank_iban_string
         name: "giro"
 ```
+
+## OCR
+Workaround
+```
+docker exec -it homeassistant bash
+apk add --no-cache tesseract-ocr
+mkdir -p /usr/share/tessdata
+wget -O /usr/share/tessdata/deu.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/deu.traineddata
+wget -O /usr/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata
+tesseract --list-langs
+```
