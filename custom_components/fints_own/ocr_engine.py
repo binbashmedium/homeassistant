@@ -35,51 +35,70 @@ def save_all(data):
 def parse_receipt(text: str):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    # 1️⃣ Ladenname (erste Zeile)
-    store = lines[0]
-
-    # Blacklist – wird NICHT als Artikel gewertet
-    blacklist_starts = (
-        "UID", "SUMME", "GEG", "VISA", "EUR", "NR", "TSE", "SER", "REWE", "MARKT",
-        "Textor", "Frankfurt", "UID"
-    )
+    # Laden = erste Zeile mit Großbuchstaben
+    store = next((l for l in lines if l.isupper()), lines[0])
 
     names = []
     prices = []
+    amounts = []
+
     in_prices = False
 
+    # Regex
+    price_re = re.compile(r"(\d+[,\.]\d{2})")
+    qty_re = re.compile(r"(\d+)\s*(Stk|x)\s*(\d+[,\.]\d{2})", re.IGNORECASE)
+
     for line in lines:
-        # Preise Abschnitt beginnt ab "EUR"
+
+        # Preise beginnen ab "EUR"
         if line.upper() == "EUR":
             in_prices = True
             continue
 
         if not in_prices:
-            # Header skippen
-            if line.upper().startswith(blacklist_starts):
+            # Artikelzeilen
+            m_qty = qty_re.search(line)
+            if m_qty:
+                # Stückzahlzeile gefunden
+                qty = int(m_qty.group(1))
+                price_each = float(m_qty.group(3).replace(",", "."))
+                names.append(line)
+                amounts.append(qty * price_each)
                 continue
 
-            # Zeitpunkt, Adresse, ...
-            if re.match(r"\d{5} ", line):
-                continue
-
-            # Wenn kein Preis drin → Name
-            if not re.search(r"\d+,\d{2}", line):
-                if len(line) > 2:
-                    names.append(line)
+            # Zeilen ohne Preise = Artikelnamen
+            if not price_re.search(line) and len(line) > 3:
+                names.append(line)
+                amounts.append(None)
 
         else:
-            # Preise erkennen
-            m = re.match(r"(\d+,\d{2})\s*[AB]?", line)
-            if m:
-                prices.append(float(m.group(1).replace(",", ".")))
+            # Preise extrahieren
+            m_price = price_re.match(line)
+            if m_price:
+                prices.append(float(m_price.group(1).replace(",", ".")))
 
-    # Items matchen 1:1
+    # Jetzt Names + Prices + Amounts matchen
     items = []
-    for name, price in zip(names, prices):
-        items.append({"name": name, "price": price})
+    p_idx = 0
 
-    # Total = letzter hoher Betrag
+    for idx, name in enumerate(names):
+        if amounts[idx] is not None:
+            # Stückpreis
+            items.append({
+                "name": name,
+                "price": amounts[idx],
+                "qty": int(qty_re.search(name).group(1))
+            })
+        else:
+            if p_idx < len(prices):
+                items.append({
+                    "name": name,
+                    "price": prices[p_idx],
+                    "qty": 1
+                })
+                p_idx += 1
+
+    # Total = letzter Betrag
     total = None
     if prices:
         total = max(prices)
@@ -87,8 +106,9 @@ def parse_receipt(text: str):
     return {
         "store": store,
         "total": total,
-        "items": items
+        "items": items,
     }
+
 
 
 
