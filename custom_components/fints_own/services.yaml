@@ -1,50 +1,55 @@
 upload_image:
-  name: Bild hochladen
-  description: Speichert ein vom Frontend übergebenes Base64-Bild im Upload-Ordner und startet optional direkt den OCR-Scan.
+  name: "Belegbild hochladen"
+  description: "Speichert ein vom Frontend übergebenes Base64-Bild im Upload-Ordner und startet OCR."
   fields:
     filename:
-      name: Dateiname
-      description: Dateiname, z. B. kassenzettel.jpg
-      example: receipt.jpg
+      name: Datei
+      description: "Dateiname, z. B. kassenzettel.jpg"
+      example: "receipt.jpg"
+      required: true
       selector:
         text:
-          type: text
     image_data:
-      name: Bilddaten (Base64)
-      description: Data-URL wie "data:image/jpeg;base64,...."
-      example: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+      name: Base64-Daten
+      description: "data:image/jpeg;base64,..."
+      example: "data:image/jpeg;base64,/9j/4AAQ..."
+      required: true
       selector:
         text:
-          multiline: true
 
 scan_receipts:
-  name: Belege scannen (OCR)
-  description: Liest neue Bilder aus dem Upload-Ordner, führt OCR aus, schreibt nach receipts.json und verschiebt die Bilder nach /processed.
+  name: "OCR-Scan durchführen"
+  description: "Scant den Upload-Ordner erneut und aktualisiert receipts.json."
   fields:
     folder_path:
-      name: Upload-Ordner
-      description: Pfad zum Upload-Ordner (Standard /config/www/receipts_uploads)
-      example: /config/www/receipts_uploads
-      default: /config/www/receipts_uploads
+      name: Ordnerpfad
+      description: "Standard: /config/www/receipts_uploads"
+      required: false
       selector:
         text:
-          type: text
-    engine:
-      name: OCR-Engine (optional)
-      description: Welche OCR-Engine bevorzugt werden soll (falls mehrere verfügbar sind).
-      example: easyocr
-      selector:
-        select:
-          options:
-            - easyocr
-            - paddleocr
-            - doctr
-          mode: dropdown
-          multiple: false
+
+get_receipt_details:
+  name: "Belegdetails finden"
+  description: "Findet passende Receipt-Daten anhand Gesamtbetrag, Händler und optional Datum."
+  fields:
+    store:
+      name: Händler
+      description: "z. B. REWE, Lidl, Aldi"
+      example: "REWE"
       required: false
-    move_processed:
-      name: Nach Verarbeitung verschieben
-      description: Verarbeitete Bilder nach <folder_path>/processed verschieben.
-      default: true
       selector:
-        boolean: {}
+        text:
+    total:
+      name: Gesamtbetrag
+      description: "Betrag der Buchung"
+      example: "20.47"
+      required: true
+      selector:
+        text:
+    date:
+      name: Datum
+      description: "Optionales Datum, z. B. 2025-10-21"
+      example: "2025-10-21"
+      required: false
+      selector:
+        text:
