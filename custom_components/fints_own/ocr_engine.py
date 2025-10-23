@@ -33,75 +33,108 @@ def save_all(data):
 
 
 def parse_receipt(text: str):
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    # normalize lines (strip and drop empties)
+    lines_all = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines_all:
+        return {"store": None, "total": None, "items": []}
 
-    # Laden = erste Zeile mit Großbuchstaben
-    store = next((l for l in lines if l.isupper()), lines[0])
+    # 1) store = first line, then we iterate from the second line onward
+    store = lines_all[0]
+    lines = lines_all[1:]
 
-    names = []
-    prices = []
-    amounts = []
+    # regexes
+    price_re_beg = re.compile(r"^(\d+[.,]\d{2})")  # price at line start (e.g., '2,99 B')
+    price_any = re.compile(r"\d+[.,]\d{2}")        # price anywhere in line
+    qty_re = re.compile(r"^\s*(\d+)\s*(Stk|x)\s*(?:x|×)?\s*(\d+[.,]\d{2})\s*$", re.IGNORECASE)
 
+    def is_name_line(s: str) -> bool:
+        """A product name line contains letters/spaces/punct, NO digits, and is not control tokens."""
+        if not s or len(s) < 3:
+            return False
+        up = s.upper()
+        if up in ("EUR", "SUMME", "TOTAL"):
+            return False
+        if "UID" in up:
+            return False
+        # reject anything that contains digits (addresses, PLZ, IDs, etc.)
+        if re.search(r"\d", s):
+            return False
+        # allow typical chars in product names
+        return bool(re.match(r"^[A-Za-zÄÖÜäöüß .,'\-]+$", s))
+
+    names: list[str] = []
+    prices: list[float] = []
+    amounts: list[float | None] = []  # computed totals for qty lines; None for plain names
+
+    in_items = False
     in_prices = False
 
-    # Regex
-    price_re = re.compile(r"(\d+[,\.]\d{2})")
-    qty_re = re.compile(r"(\d+)\s*(Stk|x)\s*(\d+[,\.]\d{2})", re.IGNORECASE)
-
     for line in lines:
-
-        # Preise beginnen ab "EUR"
+        # switch to price section at EUR
         if line.upper() == "EUR":
+            in_items = False
             in_prices = True
             continue
 
-        if not in_prices:
-            # Artikelzeilen
-            m_qty = qty_re.search(line)
+        if not in_items and not in_prices:
+            # we are still in header; start items only when we see a valid product name line
+            if is_name_line(line):
+                in_items = True
+                names.append(line)
+                amounts.append(None)
+            # else stay in header (skip)
+            continue
+
+        if in_items:
+            # quantity line like "2 Stk x 0,90"
+            m_qty = qty_re.match(line)
             if m_qty:
-                # Stückzahlzeile gefunden
                 qty = int(m_qty.group(1))
                 price_each = float(m_qty.group(3).replace(",", "."))
                 names.append(line)
                 amounts.append(qty * price_each)
                 continue
 
-            # Zeilen ohne Preise = Artikelnamen
-            if not price_re.search(line) and len(line) > 3:
+            # plain product name (no price in line)
+            if is_name_line(line) and not price_any.search(line):
                 names.append(line)
                 amounts.append(None)
+                continue
 
-        else:
-            # Preise extrahieren
-            m_price = price_re.match(line)
-            if m_price:
-                prices.append(float(m_price.group(1).replace(",", ".")))
+            # if we encounter something else (digits/junk) while in items block, just skip it
+            continue
 
-    # Jetzt Names + Prices + Amounts matchen
+        if in_prices:
+            # accept only lines that START with a price (filters out '2208' etc. that don't look like prices)
+            m_p = price_re_beg.match(line)
+            if m_p:
+                prices.append(float(m_p.group(1).replace(",", ".")))
+            # else skip (e.g. tax code, garbage)
+
+    # map names to prices
     items = []
     p_idx = 0
-
     for idx, name in enumerate(names):
         if amounts[idx] is not None:
-            # Stückpreis
+            # quantity line: computed total, derive qty from the text
+            qmatch = qty_re.match(name)
+            qty_val = int(qmatch.group(1)) if qmatch else 1
             items.append({
                 "name": name,
-                "price": amounts[idx],
-                "qty": int(qty_re.search(name).group(1))
+                "price": round(amounts[idx], 2),
+                "qty": qty_val
             })
         else:
             if p_idx < len(prices):
                 items.append({
                     "name": name,
-                    "price": prices[p_idx],
+                    "price": round(prices[p_idx], 2),
                     "qty": 1
                 })
                 p_idx += 1
 
-    # Total = letzter Betrag
-    total = None
-    if prices:
-        total = max(prices)
+    # total = last/maximum price in the price block (here: use max to match your sample)
+    total = max(prices) if prices else None
 
     return {
         "store": store,
