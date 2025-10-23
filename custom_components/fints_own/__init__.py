@@ -10,30 +10,6 @@ UPLOAD_DIR = Path("/config/www/receipts_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RECEIPTS_DB = Path("/config/custom_components/fints_own/receipts.json")
 
-
-def _find_receipt_for(amount: float, store: str | None = None) -> dict | None:
-    receipts = _load_receipts()
-    if not receipts:
-        return None
-
-    # Toleranz, falls OCR/Bank cent-ungenau
-    AMOUNT_TOL = 0.05
-
-    best = None
-    best_diff = 999
-
-    for r in receipts:
-        rec_total = r.get("total")
-        if rec_total is None:
-            continue
-
-        diff = abs(rec_total - amount)
-        if diff <= AMOUNT_TOL and diff < best_diff:
-            best = r
-            best_diff = diff
-
-    return best
-
 def _norm(s: str) -> str:
     # einfache Normalisierung: lower, accents raus, Sonderzeichen → Space, Multi-Spaces → 1 Space
     s = (s or "").lower()
