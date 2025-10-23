@@ -27,7 +27,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         try:
             image_bytes = base64.b64decode(match.group(1))
             file_path = UPLOAD_DIR / filename
-            file_path.write_bytes(image_bytes)
+            # write file in executor to avoid blocking call warning
+            def _write_file():
+                file_path.write_bytes(image_bytes)
+
+            await hass.async_add_executor_job(_write_file)
+            _LOGGER.info("📸 Bild gespeichert: %s", file_path)
             _LOGGER.info("Bild gespeichert: %s", file_path)
 
             # OCR automatisch starten
