@@ -42,3 +42,44 @@ wget -O /usr/share/tessdata/deu.traineddata https://github.com/tesseract-ocr/tes
 wget -O /usr/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata
 tesseract --list-langs
 ```
+
+
+## Beispiel Anzeige:
+
+### Upload
+```
+type: custom:file-upload-card
+title: Kassenzettel hochladen
+```
+### Anzeige mit flex-table-card
+```
+type: custom:flex-table-card
+sort_by: Datum-
+title: Ausgaben aktueller Monat
+entities:
+  include:
+    - sensor.xxxxxx_monthly_expenses
+columns:
+  - name: Datum
+    data: transactions.date
+    modify: >
+      let d = new Date(x);
+
+      ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth()+1)).slice(-2) +
+      '.'
+  - name: Betrag
+    data: transactions.amount
+    suffix: " €"
+    align: right
+    modify: |
+      parseFloat(x).toFixed(2)
+  - name: Empfänger
+    data: transactions.name
+    modify: |
+      x.replace('VISA', '')
+css:
+  table: "width: 100%; font-size: 14px;"
+  th: "text-align: left; border-bottom: 1px solid var(--divider-color);"
+  td: "padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.05);"
+
+```
