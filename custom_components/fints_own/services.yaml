@@ -1,11 +1,50 @@
 upload_image:
-  name: "Bild hochladen"
-  description: "Speichert ein vom Frontend übergebenes Base64-Bild im Upload-Ordner."
+  name: Bild hochladen
+  description: Speichert ein vom Frontend übergebenes Base64-Bild im Upload-Ordner und startet optional direkt den OCR-Scan.
   fields:
     filename:
-      description: "Dateiname, z. B. kassenzettel.jpg"
-      example: "receipt.jpg"
+      name: Dateiname
+      description: Dateiname, z. B. kassenzettel.jpg
+      example: receipt.jpg
+      selector:
+        text:
+          type: text
     image_data:
-      description: "Base64-codierter Inhalt des Bildes"
+      name: Bilddaten (Base64)
+      description: Data-URL wie "data:image/jpeg;base64,...."
       example: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
-      
+      selector:
+        text:
+          multiline: true
+
+scan_receipts:
+  name: Belege scannen (OCR)
+  description: Liest neue Bilder aus dem Upload-Ordner, führt OCR aus, schreibt nach receipts.json und verschiebt die Bilder nach /processed.
+  fields:
+    folder_path:
+      name: Upload-Ordner
+      description: Pfad zum Upload-Ordner (Standard /config/www/receipts_uploads)
+      example: /config/www/receipts_uploads
+      default: /config/www/receipts_uploads
+      selector:
+        text:
+          type: text
+    engine:
+      name: OCR-Engine (optional)
+      description: Welche OCR-Engine bevorzugt werden soll (falls mehrere verfügbar sind).
+      example: easyocr
+      selector:
+        select:
+          options:
+            - easyocr
+            - paddleocr
+            - doctr
+          mode: dropdown
+          multiple: false
+      required: false
+    move_processed:
+      name: Nach Verarbeitung verschieben
+      description: Verarbeitete Bilder nach <folder_path>/processed verschieben.
+      default: true
+      selector:
+        boolean: {}
