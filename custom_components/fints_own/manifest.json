@@ -9,9 +9,6 @@
   "loggers": ["fints", "mt_940", "sepaxml"],
   "requirements": [
     "fints==4.2.4",
-    "paddleocr",
-    "paddlepaddle",
-    "python-doctr",
     "Pillow"
   ]
 }
