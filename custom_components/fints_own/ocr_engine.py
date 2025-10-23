@@ -9,12 +9,10 @@ PROCESSED_DIR = UPLOAD_DIR / "processed"
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 # OCR-Engines
-import easyocr
 from paddleocr import PaddleOCR
 from doctr.models import ocr_predictor
 from doctr.io import DocumentFile
 
-reader_easyocr = easyocr.Reader(["de", "en"], gpu=False)
 reader_paddle = PaddleOCR(lang="german")
 reader_doctr = ocr_predictor(pretrained=True)
 
@@ -29,11 +27,6 @@ def extract_items(lines):
                 "price": float(price.replace(",", "."))
             })
     return items
-
-
-def run_easyocr(file):
-    results = reader_easyocr.readtext(str(file), detail=0)
-    return [r.strip() for r in results if r.strip()]
 
 
 def run_paddleocr(file):
@@ -57,14 +50,9 @@ def process_receipt(file_path: Path):
     try:
         ocr_results = {}
 
-        easy_lines = run_easyocr(file_path)
         paddle_lines = run_paddleocr(file_path)
         doctr_lines = run_doctr(file_path)
-
-        ocr_results["easyocr"] = {
-            "lines": easy_lines,
-            "items": extract_items(easy_lines)
-        }
+        
         ocr_results["paddleocr"] = {
             "lines": paddle_lines,
             "items": extract_items(paddle_lines)
@@ -80,8 +68,8 @@ def process_receipt(file_path: Path):
         }
 
         _LOGGER.info(
-            "OCR abgeschlossen für %s (Easy:%d, Paddle:%d, Doctr:%d Zeilen)",
-            file_path.name, len(easy_lines), len(paddle_lines), len(doctr_lines)
+            "OCR abgeschlossen für %s (Paddle:%d, Doctr:%d Zeilen)",
+            file_path.name,len(paddle_lines), len(doctr_lines)
         )
 
         return result
