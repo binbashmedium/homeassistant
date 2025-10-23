@@ -1,24 +1,42 @@
+import pytesseract
+from PIL import Image
 from pathlib import Path
-import logging, json, re, shutil
+import re, json, shutil, logging
 
 _LOGGER = logging.getLogger(__name__)
 
+# Paths
 DB_PATH = Path("/config/custom_components/fints_own/receipts.json")
 UPLOAD_DIR = Path("/config/www/receipts_uploads")
 PROCESSED_DIR = UPLOAD_DIR / "processed"
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# OCR-Engines
-from paddleocr import PaddleOCR
-from doctr.models import ocr_predictor
-from doctr.io import DocumentFile
+# Explicit path to tesseract binary (helps inside HA containers)
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
-reader_paddle = PaddleOCR(lang="german")
-reader_doctr = ocr_predictor(pretrained=True)
 
-def extract_items(lines):
+def read_existing():
+    """Lese bestehende receipts.json ein."""
+    if DB_PATH.exists():
+        try:
+            return json.loads(DB_PATH.read_text())
+        except Exception as e:
+            _LOGGER.error("Fehler beim Lesen von receipts.json: %s", e)
+    return []
+
+
+def save_all(data):
+    """Speichere alle OCR-Ergebnisse in JSON-Datei."""
+    try:
+        DB_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception as e:
+        _LOGGER.error("Fehler beim Schreiben von receipts.json: %s", e)
+
+
+def extract_items(text: str):
+    """Einfache Artikelerkennung: Name + Preis (z. B. 'Milch 1,29')."""
     items = []
-    for line in lines:
+    for line in text.splitlines():
         match = re.match(r"(.+?)\s+(\d+,\d{2})", line)
         if match:
             name, price = match.groups()
@@ -29,65 +47,60 @@ def extract_items(lines):
     return items
 
 
-def run_paddleocr(file):
-    results = reader_paddle.ocr(str(file), cls=True)
-    lines = []
-    for block in results:
-        for line in block:
-            lines.append(line[1][0])
-    return lines
-
-
-def run_doctr(file):
-    doc = DocumentFile.from_images(str(file))
-    result = reader_doctr(doc)
-    text = result.render()
-    return [t.strip() for t in text.splitlines() if t.strip()]
-
-
 def process_receipt(file_path: Path):
-    """Testet mehrere OCR-Engines und vergleicht Ergebnisse"""
+    """Führe OCR auf einer Bilddatei aus und extrahiere Artikel."""
     try:
-        ocr_results = {}
+        image = Image.open(file_path)
+        text = pytesseract.image_to_string(image, lang="deu")
 
-        paddle_lines = run_paddleocr(file_path)
-        doctr_lines = run_doctr(file_path)
-        
-        ocr_results["paddleocr"] = {
-            "lines": paddle_lines,
-            "items": extract_items(paddle_lines)
-        }
-        ocr_results["doctr"] = {
-            "lines": doctr_lines,
-            "items": extract_items(doctr_lines)
-        }
-
+        items = extract_items(text)
         result = {
             "file": file_path.name,
-            "ocr_results": ocr_results
+            "items": items,
+            "raw_text": text.strip()
         }
 
         _LOGGER.info(
-            "OCR abgeschlossen für %s (Paddle:%d, Doctr:%d Zeilen)",
-            file_path.name,len(paddle_lines), len(doctr_lines)
+            "OCR abgeschlossen für %s: %d Artikel erkannt",
+            file_path.name, len(items)
         )
-
         return result
+
     except Exception as e:
         _LOGGER.error("Fehler bei OCR für %s: %s", file_path, e)
         return None
 
 
 def scan_folder(folder: Path = UPLOAD_DIR):
-    data = []
+    """Scanne alle neuen Bilder im Upload-Ordner."""
+    data = read_existing()
+    known_files = {entry["file"] for entry in data}
+    new_results = []
+
     for img in folder.glob("*.[jp][pn]g"):
-        res = process_receipt(img)
-        if not res:
+        if img.name in known_files:
             continue
-        data.append(res)
-        shutil.move(str(img), PROCESSED_DIR / img.name)
-    if data:
-        DB_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        _LOGGER.info("OCR-Ergebnisse gespeichert: %d Dateien", len(data))
+
+        _LOGGER.info("Starte OCR für Datei: %s", img.name)
+        result = process_receipt(img)
+        if not result:
+            continue
+
+        data.append(result)
+        new_results.append(result)
+
+        # Verschiebe in processed/
+        target = PROCESSED_DIR / img.name
+        try:
+            shutil.move(str(img), target)
+            _LOGGER.info("Verschoben nach: %s", target)
+        except Exception as e:
+            _LOGGER.error("Fehler beim Verschieben: %s", e)
+
+    if new_results:
+        save_all(data)
+        _LOGGER.info("%d neue Belege verarbeitet und gespeichert.", len(new_results))
     else:
-        _LOGGER.info("Keine neuen Dateien gefunden")
+        _LOGGER.info("Keine neuen Belege gefunden.")
+
+    return new_results
