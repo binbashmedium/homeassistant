@@ -22,7 +22,6 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-import unicodedata
 import json
 import re
 from pathlib import Path
@@ -32,32 +31,15 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(hours=1)
 ICON = "mdi:currency-eur"
 
-# Receipt DB location
+# ──────────────────────────────────────────────────────────────────────────────
+# Receipt-Daten (direkt aus der JSON lesen; Matching NUR über Betrag)
+# ──────────────────────────────────────────────────────────────────────────────
+
 RECEIPTS_DB = Path("/config/custom_components/fints_own/receipts.json")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Receipt Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _norm(s: str) -> str:
-    s = (s or "").lower()
-    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
-    s = re.sub(r"[^a-z0-9]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-def _token_overlap(a: str, b: str) -> float:
-    ta = set(_norm(a).split())
-    tb = set(_norm(b).split())
-    if not ta or not tb:
-        return 0.0
-    inter = len(ta & tb)
-    return inter / max(len(ta), len(tb))
-
-
 def _load_receipts() -> list:
+    """Liest die erkannte Belegliste aus receipts.json."""
     if RECEIPTS_DB.exists():
         try:
             return json.loads(RECEIPTS_DB.read_text())
@@ -67,23 +49,24 @@ def _load_receipts() -> list:
     return []
 
 
-def _find_receipt_for(amount: float, store: str | None = None) -> dict | None:
+def _find_receipt_for(amount: float) -> dict | None:
+    """Sucht den Beleg nur nach Betrag (±0,05 € Toleranz)."""
     receipts = _load_receipts()
     if not receipts:
         return None
 
-    # Toleranz, falls OCR/Bank cent-ungenau
     AMOUNT_TOL = 0.05
-
     best = None
-    best_diff = 999
+    best_diff = 999.0
 
     for r in receipts:
         rec_total = r.get("total")
         if rec_total is None:
             continue
-
-        diff = abs(rec_total - amount)
+        try:
+            diff = abs(float(rec_total) - float(amount))
+        except Exception:
+            continue
         if diff <= AMOUNT_TOL and diff < best_diff:
             best = r
             best_diff = diff
@@ -151,15 +134,15 @@ def setup_platform(
 
     client = FinTsClient(credentials, fints_name, account_config, holdings_config)
     balance_accounts, holdings_accounts = client.detect_accounts()
-    accounts: list[SensorEntity] = []
+    entities: list[SensorEntity] = []
 
     for account in balance_accounts:
         if config[CONF_ACCOUNTS] and account.iban not in account_config:
             continue
 
         account_name = account_config.get(account.iban) or f"{fints_name} - {account.iban}"
-        accounts.append(FinTsAccount(client, account, account_name))
-        accounts.append(
+        entities.append(FinTsAccount(client, account, account_name))
+        entities.append(
             FinTsMonthlyExpensesSensor(
                 client, account, fints_name, exclude_filter=config.get(EXCLUDE_KEYWORDS, [])
             )
@@ -170,12 +153,13 @@ def setup_platform(
             continue
 
         account_name = holdings_config.get(account.accountnumber) or f"{fints_name} - {account.accountnumber}"
-        accounts.append(FinTsHoldingsAccount(client, account, account_name))
+        entities.append(FinTsHoldingsAccount(client, account, account_name))
 
-    add_entities(accounts, True)
+    add_entities(entities, True)
 
 
 class FinTsClient:
+    """Wrapper around the FinTS3PinTanClient."""
 
     def __init__(self, credentials: BankCredentials, name: str, account_config: dict, holdings_config: dict) -> None:
         self._credentials = credentials
@@ -196,8 +180,8 @@ class FinTsClient:
         )
 
     def detect_accounts(self) -> tuple[list, list]:
-        balance_accounts = []
-        holdings_accounts = []
+        balance_accounts: list[SEPAAccount] = []
+        holdings_accounts: list[SEPAAccount] = []
         accounts = self.client.get_sepa_accounts()
         for account in accounts:
             if self.is_balance_account(account):
@@ -213,39 +197,33 @@ class FinTsClient:
                 for account in self.client.get_information()["accounts"]
             }
             self._account_information_fetched = True
-
         return self._account_information.get(iban, None)
 
     def is_balance_account(self, account: SEPAAccount) -> bool:
         if not account.iban:
             return False
-
         ai = self.get_account_information(account.iban)
         if not ai:
             return False
-
         if (t := ai.get("type")) and 1 <= t <= 9:
             return True
-
         return account.iban in self.account_config
 
     def is_holdings_account(self, account: SEPAAccount) -> bool:
         if not account.iban:
             return False
-
         ai = self.get_account_information(account.iban)
         if not ai:
             return False
-
         if (t := ai.get("type")) and 30 <= t <= 39:
             return True
-
         return account.accountnumber in self.holdings_config
 
 
 class FinTsAccount(SensorEntity):
+    """Saldo-Sensor pro Konto."""
 
-    def __init__(self, client: FinTsClient, account, name: str) -> None:
+    def __init__(self, client: FinTsClient, account: SEPAAccount, name: str) -> None:
         self._client = client
         self._account = account
         self._attr_name = name
@@ -271,8 +249,9 @@ class FinTsAccount(SensorEntity):
 
 
 class FinTsMonthlyExpensesSensor(SensorEntity):
+    """Monatliche Ausgaben inkl. verknüpfter Receipt-Details (per Betrag)."""
 
-    def __init__(self, client, account, name: str, exclude_filter: list[str] | None = None) -> None:
+    def __init__(self, client: FinTsClient, account: SEPAAccount, name: str, exclude_filter: list[str] | None = None) -> None:
         self._client = client
         self._account = account
         self._attr_name = f"{name} Monthly Expenses"
@@ -294,7 +273,7 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
         try:
             transactions = self._client.client.get_transactions(self._account, first_day, today, True)
             total = 0.0
-            parsed_transactions = []
+            parsed_transactions: list[dict[str, Any]] = []
 
             for tx in transactions:
                 data = getattr(tx, "data", None)
@@ -312,36 +291,40 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
 
                 currency = getattr(amount_obj, "currency", "EUR")
                 purpose = (data.get("purpose") or "").strip()
-                name = (data.get("applicant_name") or "").strip()
+                applicant_name = (data.get("applicant_name") or "").strip()
 
                 date_val = data.get("date") or data.get("valutadate")
 
+                # date_str wird für spätere Auswertungen aufbereitet (optional)
                 if isinstance(date_val, (datetime, date)):
                     date_str = date_val.strftime("%Y-%m-%d")
                 elif isinstance(date_val, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_val):
                     date_str = date_val
                 else:
-                    match = re.search(r"(\d{2}\.\d{2})", purpose)
-                    if match:
-                        day, month = match.group(1).split(".")
-                        year = today.year
-                        date_str = f"{year}-{month}-{day}"
+                    m = re.search(r"(\d{2}\.\d{2})", purpose)
+                    if m:
+                        d, mth = m.group(1).split(".")
+                        yr = today.year
+                        date_str = f"{yr}-{mth}-{d}"
                     else:
                         date_str = None
 
-                if any(ex.lower() in (purpose + name).lower() for ex in self._exclude_filter):
+                # Filter für unerwünschte Buchungen
+                if any(ex.lower() in (purpose + applicant_name).lower() for ex in self._exclude_filter):
                     continue
 
+                # Nur Ausgaben (negative Beträge)
                 if amount < 0:
                     total += amount
 
+                    # Beleg NUR über Betrag suchen
                     receipt = _find_receipt_for(abs(amount))
 
-                    parsed_tx = {
+                    parsed_tx: dict[str, Any] = {
                         "date": str(date_val),
                         "amount": abs(amount),
                         "currency": currency,
-                        "name": name or "Unbekannt",
+                        "name": applicant_name or "Unbekannt",
                         "purpose": purpose[:120],
                     }
 
@@ -349,12 +332,10 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                         parsed_tx["store"] = receipt.get("store")
                         parsed_tx["items"] = receipt.get("items", [])
                         parsed_tx["file"] = receipt.get("file")
-                        parsed_tx["raw_text"] = receipt.get("raw_text")
                     else:
                         parsed_tx["store"] = None
                         parsed_tx["items"] = []
                         parsed_tx["file"] = None
-                        parsed_tx["raw_text"] = None
 
                     parsed_transactions.append(parsed_tx)
 
@@ -367,13 +348,14 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
             )
 
         except Exception as e:
-            self._attr_native_value = None
             _LOGGER.error("FinTS Monthly Error: %s", e)
+            self._attr_native_value = None
 
 
 class FinTsHoldingsAccount(SensorEntity):
+    """Depot-/Holdings-Sensor."""
 
-    def __init__(self, client: FinTsClient, account, name: str) -> None:
+    def __init__(self, client: FinTsClient, account: SEPAAccount, name: str) -> None:
         self._client = client
         self._attr_name = name
         self._account = account
@@ -388,7 +370,7 @@ class FinTsHoldingsAccount(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        attributes = {
+        attributes: dict[str, Any] = {
             ATTR_ACCOUNT: self._account.accountnumber,
             ATTR_ACCOUNT_TYPE: "holdings",
         }
