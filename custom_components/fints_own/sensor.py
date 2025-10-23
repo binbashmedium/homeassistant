@@ -72,31 +72,21 @@ def _find_receipt_for(amount: float, store: str | None = None) -> dict | None:
     if not receipts:
         return None
 
+    # Toleranz, falls OCR/Bank cent-ungenau
     AMOUNT_TOL = 0.05
-    MIN_STORE_SIM = 0.4 if store else 0.0
 
     best = None
-    best_score = 0.0
+    best_diff = 999
 
     for r in receipts:
         rec_total = r.get("total")
         if rec_total is None:
             continue
 
-        if abs(rec_total - amount) > AMOUNT_TOL:
-            continue
-
-        score = 1.0 - abs(rec_total - amount)
-
-        if store:
-            sim = _token_overlap(store, r.get("store", ""))
-            if sim < MIN_STORE_SIM:
-                continue
-            score += sim
-
-        if score > best_score:
-            best_score = score
+        diff = abs(rec_total - amount)
+        if diff <= AMOUNT_TOL and diff < best_diff:
             best = r
+            best_diff = diff
 
     return best
 
@@ -345,8 +335,7 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 if amount < 0:
                     total += amount
 
-                    store_name = name or purpose
-                    receipt = _find_receipt_for(abs(amount), store_name)
+                    receipt = _find_receipt_for(abs(amount))
 
                     parsed_tx = {
                         "date": str(date_val),
