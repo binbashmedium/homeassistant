@@ -31,50 +31,65 @@ def save_all(data):
         _LOGGER.error("Fehler beim Schreiben von receipts.json: %s", e)
 
 
-# 🔎 REWE-Parsing
+
 def parse_receipt(text: str):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    # 1️⃣ Ladenname
+    # 1️⃣ Ladenname (erste Zeile)
     store = lines[0]
+
+    # Blacklist – wird NICHT als Artikel gewertet
+    blacklist_starts = (
+        "UID", "SUMME", "GEG", "VISA", "EUR", "NR", "TSE", "SER", "REWE", "MARKT",
+        "Textor", "Frankfurt", "UID"
+    )
 
     names = []
     prices = []
-    total = None
-
-    # Phase tracking
-    in_item_names = False
     in_prices = False
 
     for line in lines:
-        # Start of price block
+        # Preise Abschnitt beginnt ab "EUR"
         if line.upper() == "EUR":
-            in_item_names = False
             in_prices = True
             continue
 
-        # Before "EUR" → Artikelnamen
         if not in_prices:
-            # Ignore obvious junk
+            # Header skippen
+            if line.upper().startswith(blacklist_starts):
+                continue
+
+            # Zeitpunkt, Adresse, ...
+            if re.match(r"\d{5} ", line):
+                continue
+
+            # Wenn kein Preis drin → Name
             if not re.search(r"\d+,\d{2}", line):
                 if len(line) > 2:
                     names.append(line)
-        else:
-            # After "EUR" → Preise
-            match = re.match(r"(\d+,\d{2})\s*[A-Z]?", line)
-            if match:
-                prices.append(float(match.group(1).replace(",", ".")))
 
-    # Items kombinieren (gleiche Länge angenommen)
+        else:
+            # Preise erkennen
+            m = re.match(r"(\d+,\d{2})\s*[AB]?", line)
+            if m:
+                prices.append(float(m.group(1).replace(",", ".")))
+
+    # Items matchen 1:1
     items = []
     for name, price in zip(names, prices):
         items.append({"name": name, "price": price})
 
-    # Gesamtpreis → höchster Preis
+    # Total = letzter hoher Betrag
+    total = None
     if prices:
         total = max(prices)
 
-    return {"store": store, "total": total, "items": items}
+    return {
+        "store": store,
+        "total": total,
+        "items": items
+    }
+
 
 
 def process_receipt(file_path: Path):
