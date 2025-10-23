@@ -381,7 +381,7 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 if amount < 0:
                     total += amount
                     # OCR-Receipt matchen
-                    receipt = _find_receipt_for(abs(amount))
+                    receipt = _find_receipt_for(abs(amount), "")
 
                     parsed_tx = {
                             "date": str(date_val),
