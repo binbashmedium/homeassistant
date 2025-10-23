@@ -34,17 +34,46 @@ def save_all(data):
 
 
 def extract_items(text: str):
-    """Einfache Artikelerkennung: Name + Preis (z. B. 'Milch 1,29')."""
+    """
+    Extrahiere Artikelzeilen mit Preisen.
+    Erkennt Formate wie:
+      'Milch 1,29'
+      '2 Stk x 1,69'
+      'BIO HAFERFLOCKEN  2,49 B'
+      'SPAGHETTIGER. TO SB  1.69'
+    """
     items = []
     for line in text.splitlines():
-        match = re.match(r"(.+?)\s+(\d+,\d{2})", line)
-        if match:
-            name, price = match.groups()
-            items.append({
-                "name": name.strip(),
-                "price": float(price.replace(",", "."))
-            })
+        line = line.strip()
+        if not line:
+            continue
+
+        # 1️⃣ Preis mit Komma oder Punkt, evtl. gefolgt von Buchstaben (B/A)
+        m = re.search(r"(\d+[\.,]\d{2})\s*[BA]?$", line)
+        if not m:
+            continue
+
+        price_str = m.group(1).replace(",", ".")
+        try:
+            price = float(price_str)
+        except ValueError:
+            continue
+
+        # 2️⃣ Artikelname = alles vor dem Preis
+        name = re.sub(r"\s*\d+[\.,]\d{2}\s*[BA]?$", "", line).strip(" -;:,.")
+        if len(name) < 2:
+            continue
+
+        # 3️⃣ Optionale Stückzahl '2 Stk x'
+        name = re.sub(r"^\d+\s*(Stk|x|X)\s*", "", name, flags=re.IGNORECASE)
+
+        items.append({
+            "name": name,
+            "price": price
+        })
+
     return items
+
 
 
 def process_receipt(file_path: Path):
