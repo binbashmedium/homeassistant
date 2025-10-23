@@ -5,18 +5,17 @@ import re, json, shutil, logging
 
 _LOGGER = logging.getLogger(__name__)
 
-# Paths
+# Storage
 DB_PATH = Path("/config/custom_components/fints_own/receipts.json")
 UPLOAD_DIR = Path("/config/www/receipts_uploads")
 PROCESSED_DIR = UPLOAD_DIR / "processed"
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Explicit path to tesseract binary (helps inside HA containers)
+# Path to tesseract binary
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 
 def read_existing():
-    """Lese bestehende receipts.json ein."""
     if DB_PATH.exists():
         try:
             return json.loads(DB_PATH.read_text())
@@ -26,84 +25,78 @@ def read_existing():
 
 
 def save_all(data):
-    """Speichere alle OCR-Ergebnisse in JSON-Datei."""
     try:
         DB_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
     except Exception as e:
         _LOGGER.error("Fehler beim Schreiben von receipts.json: %s", e)
 
 
-import re
-
+# 🔎 REWE-Parsing
 def parse_receipt(text: str):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    store = lines[0]                           # Zeile 0 ist der Ladenname
-    total = None
+    # 1️⃣ Ladenname
+    store = lines[0]
+
     names = []
     prices = []
+    total = None
 
-    # 1️⃣ Artikel-Namen sammeln (vor "EUR")
-    for line in lines:
-        if line.upper() == "EUR":
-            break
-        if re.match(r".*[A-ZÄÖÜa-zäöü]+.*", line) and not re.match(r".*\d+,\d{2}", line):
-            names.append(line)
+    # Phase tracking
+    in_item_names = False
+    in_prices = False
 
-    # 2️⃣ Preise + Steuer-Code sammeln (nach "EUR")
-    euro_section = False
     for line in lines:
+        # Start of price block
         if line.upper() == "EUR":
-            euro_section = True
+            in_item_names = False
+            in_prices = True
             continue
-        if euro_section:
-            m = re.match(r"(\d+,\d{2})\s*[AB]?", line)
-            if m:
-                prices.append(float(m.group(1).replace(",", ".")))
 
-    # 3️⃣ Kombiniere Artikel + Preise
+        # Before "EUR" → Artikelnamen
+        if not in_prices:
+            # Ignore obvious junk
+            if not re.search(r"\d+,\d{2}", line):
+                if len(line) > 2:
+                    names.append(line)
+        else:
+            # After "EUR" → Preise
+            match = re.match(r"(\d+,\d{2})\s*[A-Z]?", line)
+            if match:
+                prices.append(float(match.group(1).replace(",", ".")))
+
+    # Items kombinieren (gleiche Länge angenommen)
     items = []
     for name, price in zip(names, prices):
-        items.append({
-            "name": name,
-            "price": price
-        })
+        items.append({"name": name, "price": price})
 
-    # 4️⃣ Gesamtbetrag suchen (höchster erkannter Preis)
+    # Gesamtpreis → höchster Preis
     if prices:
         total = max(prices)
 
-    return {
-        "store": store,
-        "total": total,
-        "items": items
-    }
-
-
+    return {"store": store, "total": total, "items": items}
 
 
 def process_receipt(file_path: Path):
-    """Führe OCR auf einer Bilddatei aus und extrahiere Artikel."""
     try:
         image = Image.open(file_path)
         text = pytesseract.image_to_string(image, lang="deu")
 
         parsed = parse_receipt(text)
-        items = parsed["items"]
-        store = parsed["store"]
-        total = parsed["total"]
-        items = extract_items(text)
-        result =  {
-                "file": file_path.name,
-                "store": store,
-                "total": total,
-                "items": items,
-                "raw_text": text.strip()}
+
+        result = {
+            "file": file_path.name,
+            "store": parsed["store"],
+            "total": parsed["total"],
+            "items": parsed["items"],
+            "raw_text": text.strip()
+        }
 
         _LOGGER.info(
             "OCR abgeschlossen für %s: %d Artikel erkannt",
-            file_path.name, len(items)
+            file_path.name, len(parsed["items"])
         )
+
         return result
 
     except Exception as e:
@@ -112,7 +105,6 @@ def process_receipt(file_path: Path):
 
 
 def scan_folder(folder: Path = UPLOAD_DIR):
-    """Scanne alle neuen Bilder im Upload-Ordner."""
     data = read_existing()
     known_files = {entry["file"] for entry in data}
     new_results = []
@@ -129,7 +121,7 @@ def scan_folder(folder: Path = UPLOAD_DIR):
         data.append(result)
         new_results.append(result)
 
-        # Verschiebe in processed/
+        # Verschiebe nach processed/
         target = PROCESSED_DIR / img.name
         try:
             shutil.move(str(img), target)
