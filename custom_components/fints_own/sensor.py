@@ -380,13 +380,27 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 # Nur Ausgaben (negative Beträge)
                 if amount < 0:
                     total += amount
-                    parsed_transactions.append({
-                        "date": str(date_val),
-                        "amount": abs(amount),
-                        "currency": currency,
-                        "name": name or "Unbekannt",
-                        "purpose": purpose[:120],
-                    })
+                    # OCR-Receipt matchen
+                    receipt = _find_receipt_for(abs(amount))
+
+                    parsed_tx = {
+                            "date": str(date_val),
+                            "amount": abs(amount),
+                            "currency": currency,
+                            "name": name or "Unbekannt",
+                            "purpose": purpose[:120],
+                            }
+
+                    if receipt:
+                        parsed_tx["store"] = receipt.get("store")
+                        parsed_tx["items"] = receipt.get("items", [])
+                        parsed_tx["file"]  = receipt.get("file")
+                    else:
+                        parsed_tx["store"] = None
+                        parsed_tx["items"] = []
+                        parsed_tx["file"]  = None
+
+                   parsed_transactions.append(parsed_tx)
 
             # Ergebnisse in Sensor schreiben
             self._attr_native_value = abs(total)
