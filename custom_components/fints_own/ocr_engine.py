@@ -33,46 +33,52 @@ def save_all(data):
         _LOGGER.error("Fehler beim Schreiben von receipts.json: %s", e)
 
 
-def extract_items(text: str):
-    """
-    Extrahiere Artikelzeilen mit Preisen.
-    Erkennt Formate wie:
-      'Milch 1,29'
-      '2 Stk x 1,69'
-      'BIO HAFERFLOCKEN  2,49 B'
-      'SPAGHETTIGER. TO SB  1.69'
-    """
+import re
+
+def parse_receipt(text: str):
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    store = lines[0]                           # Zeile 0 ist der Ladenname
+    total = None
+    names = []
+    prices = []
+
+    # 1️⃣ Artikel-Namen sammeln (vor "EUR")
+    for line in lines:
+        if line.upper() == "EUR":
+            break
+        if re.match(r".*[A-ZÄÖÜa-zäöü]+.*", line) and not re.match(r".*\d+,\d{2}", line):
+            names.append(line)
+
+    # 2️⃣ Preise + Steuer-Code sammeln (nach "EUR")
+    euro_section = False
+    for line in lines:
+        if line.upper() == "EUR":
+            euro_section = True
+            continue
+        if euro_section:
+            m = re.match(r"(\d+,\d{2})\s*[AB]?", line)
+            if m:
+                prices.append(float(m.group(1).replace(",", ".")))
+
+    # 3️⃣ Kombiniere Artikel + Preise
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        # 1️⃣ Preis mit Komma oder Punkt, evtl. gefolgt von Buchstaben (B/A)
-        m = re.search(r"(\d+[\.,]\d{2})\s*[BA]?$", line)
-        if not m:
-            continue
-
-        price_str = m.group(1).replace(",", ".")
-        try:
-            price = float(price_str)
-        except ValueError:
-            continue
-
-        # 2️⃣ Artikelname = alles vor dem Preis
-        name = re.sub(r"\s*\d+[\.,]\d{2}\s*[BA]?$", "", line).strip(" -;:,.")
-        if len(name) < 2:
-            continue
-
-        # 3️⃣ Optionale Stückzahl '2 Stk x'
-        name = re.sub(r"^\d+\s*(Stk|x|X)\s*", "", name, flags=re.IGNORECASE)
-
+    for name, price in zip(names, prices):
         items.append({
             "name": name,
             "price": price
         })
 
-    return items
+    # 4️⃣ Gesamtbetrag suchen (höchster erkannter Preis)
+    if prices:
+        total = max(prices)
+
+    return {
+        "store": store,
+        "total": total,
+        "items": items
+    }
+
 
 
 
@@ -82,12 +88,17 @@ def process_receipt(file_path: Path):
         image = Image.open(file_path)
         text = pytesseract.image_to_string(image, lang="deu")
 
+        parsed = parse_receipt(text)
+        items = parsed["items"]
+        store = parsed["store"]
+        total = parsed["total"]
         items = extract_items(text)
-        result = {
-            "file": file_path.name,
-            "items": items,
-            "raw_text": text.strip()
-        }
+        result =  {
+                "file": file_path.name,
+                "store": store,
+                "total": total,
+                "items": items,
+                "raw_text": text.strip()}
 
         _LOGGER.info(
             "OCR abgeschlossen für %s: %d Artikel erkannt",
