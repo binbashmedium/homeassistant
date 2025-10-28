@@ -35,7 +35,7 @@ ICON = "mdi:currency-eur"
 # Receipt-Daten (direkt aus der JSON lesen; Matching NUR über Betrag)
 # ──────────────────────────────────────────────────────────────────────────────
 
-RECEIPTS_DB = Path("/config/custom_components/fints_own/receipts.json")
+RECEIPTS_DB = Path("/share/ocr/receipts.json")
 
 
 def _load_receipts() -> list:
