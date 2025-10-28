@@ -35,11 +35,11 @@ ICON = "mdi:currency-eur"
 # Receipt-Daten (direkt aus der JSON lesen; Matching NUR über Betrag)
 # ──────────────────────────────────────────────────────────────────────────────
 
-RECEIPTS_DB = Path("/share/ocr/result.json")
+RECEIPTS_DB = Path("/share/ocr/results.json")
 
 
 def _load_receipts() -> list:
-    """Liest die erkannte Belegliste aus receipts.json."""
+    """Liest die erkannte Belegliste aus results.json."""
     if RECEIPTS_DB.exists():
         try:
             return json.loads(RECEIPTS_DB.read_text())
