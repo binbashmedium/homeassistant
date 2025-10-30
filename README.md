@@ -33,88 +33,10 @@ sensor:
 ```
 
 ## OCR
-Workaround
-```
-docker exec -it homeassistant bash
-apk add --no-cache tesseract-ocr
-mkdir -p /usr/share/tessdata
-wget -O /usr/share/tessdata/deu.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/deu.traineddata
-wget -O /usr/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata
-tesseract --list-langs
-```
-
+OCR is done on the addon which gets the Pictures per REST API and saves the result in /share/ocr/results.json. The Sensor only loads the items when the price matches. 
 
 ## Beispiel Anzeige:
 
-### Upload
-Copy to /config/www/community/file_upload_card/file_upload_card.js 
-```
-class FileUploadCard extends HTMLElement {
-  setConfig(config) {
-    this.config = config;
-    this.innerHTML = `
-      <ha-card header="${config.title || 'Kassenzettel hochladen'}">
-        <input type="file" id="fileInput" accept="image/*"><br><br>
-        <button id="uploadBtn">Hochladen</button>
-        <div id="status" style="margin-top:10px; color: var(--primary-text-color); white-space: pre-wrap;"></div>
-      </ha-card>
-    `;
-
-    const status = this.querySelector("#status");
-    const uploadBtn = this.querySelector("#uploadBtn");
-    const fileInput = this.querySelector("#fileInput");
-
-    uploadBtn.addEventListener("click", async () => {
-      const file = fileInput.files[0];
-      if (!file) {
-        status.innerText = "Bitte eine Datei auswählen.";
-        return;
-      }
-
-      status.innerText = "Lade Datei hoch ...";
-
-      try {
-        const reader = new FileReader();
-
-        reader.onload = async () => {
-          try {
-            const base64Data = reader.result;
-
-            // ✅ Der HA-native Service-Call (funktioniert in Browser + App)
-            await this.hass.callService("fints_own", "upload_image", {
-              filename: file.name,
-              image_data: base64Data,
-            });
-
-            status.innerText = `Datei "${file.name}" erfolgreich hochgeladen.`;
-          } catch (err) {
-            status.innerText = `Fehler beim Upload-Service:\n${err.message || err}`;
-          }
-        };
-
-        reader.onerror = (e) => {
-          status.innerText = `Fehler beim Lesen der Datei:\n${e.target.error.message}`;
-        };
-
-        reader.readAsDataURL(file);
-      } catch (outerErr) {
-        status.innerText = `Allgemeiner Fehler:\n${outerErr.message || outerErr}`;
-      }
-    });
-  }
-
-  // 🔹 Home Assistant stellt "hass" automatisch beim Einbinden bereit
-  set hass(hass) {
-    this._hass = hass;
-  }
-
-  get hass() {
-    return this._hass;
-  }
-}
-
-customElements.define("file-upload-card", FileUploadCard);
-```
 
 ```
 type: custom:file-upload-card
