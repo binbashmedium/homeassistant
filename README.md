@@ -34,9 +34,8 @@ sensor:
 
 ## OCR
 OCR is done on the addon which gets the Pictures per REST API and saves the result in /share/ocr/results.json. The Sensor only loads the items when the price matches. 
-
+https://github.com/binbashmedium/receipt-ocr-ha-addon
 ## Beispiel Anzeige:
-
 
 ```
 type: custom:file-upload-card
