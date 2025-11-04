@@ -23,6 +23,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 import json
+import re
 import pymysql
 from pathlib import Path
 
@@ -341,7 +342,6 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
     def update(self) -> None:
         today = date.today()
         first_day = today.replace(day=1)
-        # Letzter Tag des Monats
         if today.month == 12:
             last_day = date(today.year + 1, 1, 1) - timedelta(days=1)
         else:
@@ -369,14 +369,30 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 currency = getattr(amount_obj, "currency", "EUR")
                 purpose = (data.get("purpose") or "").strip()
                 applicant_name = (data.get("applicant_name") or "").strip()
-                date_val = data.get("date") or data.get("valutadate")
-                if isinstance(date_val, str):
+
+                # Datum zuerst aus dem Verwendungszweck extrahieren
+                date_val = None
+                m = re.search(r"(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?", purpose)
+                if m:
+                    d, mth, yr = m.group(1), m.group(2), m.group(3)
                     try:
-                        date_val = datetime.fromisoformat(date_val).date()
-                    except Exception:
-                        continue
-                elif not isinstance(date_val, date):
-                    date_val = today
+                        yr = int(yr) if yr else today.year
+                        date_val = date(yr, int(mth), int(d))
+                    except ValueError:
+                        date_val = None
+
+                # Fallback auf Buchungs-/Valutadatum
+                if date_val is None:
+                    raw_date = data.get("date") or data.get("valutadate")
+                    if isinstance(raw_date, str):
+                        try:
+                            date_val = datetime.fromisoformat(raw_date).date()
+                        except Exception:
+                            date_val = today
+                    elif isinstance(raw_date, date):
+                        date_val = raw_date
+                    else:
+                        date_val = today
 
                 # Nur Transaktionen innerhalb des aktuellen Monats
                 if not (first_day <= date_val <= last_day):
