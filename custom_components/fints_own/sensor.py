@@ -269,6 +269,10 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
     def update(self) -> None:
         today = date.today()
         first_day = today.replace(day=1)
+        if today.month == 12:
+            last_day = date(today.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            last_day = date(today.year, today.month + 1, 1) - timedelta(days=1)
 
         try:
             transactions = self._client.client.get_transactions(self._account, first_day, today, True)
@@ -293,35 +297,46 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 purpose = (data.get("purpose") or "").strip()
                 applicant_name = (data.get("applicant_name") or "").strip()
 
-                date_val = data.get("date") or data.get("valutadate")
-
-                # date_str wird für spätere Auswertungen aufbereitet (optional)
-                if isinstance(date_val, (datetime, date)):
-                    date_str = date_val.strftime("%Y-%m-%d")
-                elif isinstance(date_val, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_val):
-                    date_str = date_val
-                else:
-                    m = re.search(r"(\d{2}\.\d{2})", purpose)
-                    if m:
-                        d, mth = m.group(1).split(".")
-                        yr = today.year
-                        date_str = f"{yr}-{mth}-{d}"
-                    else:
+                # Datum immer aus dem Betreff (purpose) extrahieren
+                date_str = None
+                m = re.search(r"(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?", purpose)
+                if m:
+                    d, mth, yr = m.group(1), m.group(2), m.group(3)
+                    try:
+                        yr = int(yr) if yr else today.year
+                        dt = date(yr, int(mth), int(d))
+                        date_str = dt.strftime("%Y-%m-%d")
+                    except ValueError:
                         date_str = None
+                else:
+                    # Fallback auf Transaktionsdatum
+                    date_val = data.get("date") or data.get("valutadate")
+                    if isinstance(date_val, (datetime, date)):
+                        date_str = date_val.strftime("%Y-%m-%d")
+                    elif isinstance(date_val, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_val):
+                        date_str = date_val
 
-                # Filter für unerwünschte Buchungen
+                if not date_str:
+                    continue
+
+                # Nur Transaktionen innerhalb des Monats
+                try:
+                    tx_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                if not (first_day <= tx_date <= last_day):
+                    continue
+
+                # Ausschlussfilter prüfen
                 if any(ex.lower() in (purpose + applicant_name).lower() for ex in self._exclude_filter):
                     continue
 
-                # Nur Ausgaben (negative Beträge)
                 if amount < 0:
                     total += amount
-
-                    # Beleg NUR über Betrag suchen
                     receipt = _find_receipt_for(abs(amount))
 
                     parsed_tx: dict[str, Any] = {
-                        "date": str(date_val),
+                        "date": date_str,
                         "amount": abs(amount),
                         "currency": currency,
                         "name": applicant_name or "Unbekannt",
@@ -381,3 +396,4 @@ class FinTsHoldingsAccount(SensorEntity):
             attributes[f"{holding.name} pieces"] = holding.pieces
             attributes[f"{holding.name} price"] = holding.market_value
         return attributes
+        
