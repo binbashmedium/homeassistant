@@ -447,4 +447,4 @@ class FinTsHoldingsAccount(SensorEntity):
             attributes[f"{holding.name} pieces"] = holding.pieces
             attributes[f"{holding.name} price"] = holding.market_value
         return attributes
-        
+    
