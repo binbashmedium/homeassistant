@@ -1,4 +1,4 @@
-"""Read the balance of your bank accounts via FinTS."""
+"""Read the balance of your bank accounts via FinTS, optionally linking receipts from SQL."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 import json
 import re
+import pymysql
 from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,27 +32,81 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(hours=1)
 ICON = "mdi:currency-eur"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Receipt-Daten (direkt aus der JSON lesen; Matching NUR über Betrag)
-# ──────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Receipt-Datenbank / JSON Umschaltung
+# ──────────────────────────────────────────────────────────────
 
-RECEIPTS_DB = Path("/share/ocr/results.json")
+RECEIPTS_DB_JSON = Path("/share/ocr/results.json")
+
+CONF_DB_HOST = "db_host"
+CONF_DB_PORT = "db_port"
+CONF_DB_NAME = "db_name"
+CONF_DB_USER = "db_user"
+CONF_DB_PASS = "db_password"
+CONF_USE_DB = "use_database"
+
+DEFAULT_DB_PORT = 3306
 
 
-def _load_receipts() -> list:
-    """Liest die erkannte Belegliste aus results.json."""
-    if RECEIPTS_DB.exists():
+def _connect_db(cfg: ConfigType):
+    try:
+        return pymysql.connect(
+            host=cfg[CONF_DB_HOST],
+            port=cfg.get(CONF_DB_PORT, DEFAULT_DB_PORT),
+            user=cfg[CONF_DB_USER],
+            password=cfg[CONF_DB_PASS],
+            database=cfg[CONF_DB_NAME],
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+            charset="utf8mb4",
+        )
+    except Exception as e:
+        _LOGGER.error("DB connection failed: %s", e)
+        return None
+
+
+def _load_receipts_from_json() -> list:
+    if RECEIPTS_DB_JSON.exists():
         try:
-            return json.loads(RECEIPTS_DB.read_text())
+            return json.loads(RECEIPTS_DB_JSON.read_text())
         except Exception as e:
-            _LOGGER.error("receipt-load: %s", e)
+            _LOGGER.error("receipt-load-json: %s", e)
             return []
     return []
 
 
-def _find_receipt_for(amount: float) -> dict | None:
-    """Sucht den Beleg nur nach Betrag (±0,05 € Toleranz)."""
-    receipts = _load_receipts()
+def _load_receipts_from_db(cfg: ConfigType) -> list:
+    conn = _connect_db(cfg)
+    if not conn:
+        return []
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT r.id, r.store, r.total, r.file, r.timestamp,
+                   JSON_ARRAYAGG(JSON_OBJECT('name', i.name, 'qty', i.qty, 'price', i.price)) AS items
+            FROM receipts r
+            LEFT JOIN receipt_items i ON i.receipt_id = r.id
+            GROUP BY r.id
+            """
+        )
+        rows = cur.fetchall()
+        for r in rows:
+            try:
+                r["items"] = json.loads(r["items"]) if r["items"] else []
+            except Exception:
+                r["items"] = []
+        return rows
+    except Exception as e:
+        _LOGGER.error("receipt-load-db: %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def _find_receipt_for(amount: float, tx_date: date, use_db: bool, cfg: ConfigType | None = None) -> dict | None:
+    """Sucht passenden Beleg anhand Betrag ±0,05 und gleichem Monat des timestamps."""
+    receipts = _load_receipts_from_db(cfg) if use_db else _load_receipts_from_json()
     if not receipts:
         return None
 
@@ -61,22 +116,35 @@ def _find_receipt_for(amount: float) -> dict | None:
 
     for r in receipts:
         rec_total = r.get("total")
-        if rec_total is None:
+        ts = r.get("timestamp")
+        if rec_total is None or not ts:
             continue
+
         try:
             diff = abs(float(rec_total) - float(amount))
         except Exception:
             continue
-        if diff <= AMOUNT_TOL and diff < best_diff:
+        if diff > AMOUNT_TOL:
+            continue
+
+        # Monats-Vergleich
+        try:
+            rec_dt = datetime.fromisoformat(str(ts)).date()
+        except Exception:
+            continue
+        if rec_dt.year != tx_date.year or rec_dt.month != tx_date.month:
+            continue
+
+        if diff < best_diff:
             best = r
             best_diff = diff
 
     return best
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 # FinTS Integration
-# ──────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 
 BankCredentials = namedtuple("BankCredentials", "blz login pin url product_id")
 
@@ -109,6 +177,13 @@ PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_ACCOUNTS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
         vol.Optional(CONF_HOLDINGS, default=[]): cv.ensure_list(SCHEMA_ACCOUNTS),
         vol.Optional(EXCLUDE_KEYWORDS, default=[]): cv.ensure_list(cv.string),
+        # Datenbank-Konfiguration
+        vol.Optional(CONF_USE_DB, default=False): cv.boolean,
+        vol.Optional(CONF_DB_HOST): cv.string,
+        vol.Optional(CONF_DB_PORT, default=3306): cv.port,
+        vol.Optional(CONF_DB_NAME): cv.string,
+        vol.Optional(CONF_DB_USER): cv.string,
+        vol.Optional(CONF_DB_PASS): cv.string,
     }
 )
 
@@ -144,7 +219,7 @@ def setup_platform(
         entities.append(FinTsAccount(client, account, account_name))
         entities.append(
             FinTsMonthlyExpensesSensor(
-                client, account, fints_name, exclude_filter=config.get(EXCLUDE_KEYWORDS, [])
+                client, account, fints_name, config, exclude_filter=config.get(EXCLUDE_KEYWORDS, [])
             )
         )
 
@@ -159,8 +234,6 @@ def setup_platform(
 
 
 class FinTsClient:
-    """Wrapper around the FinTS3PinTanClient."""
-
     def __init__(self, credentials: BankCredentials, name: str, account_config: dict, holdings_config: dict) -> None:
         self._credentials = credentials
         self._account_information: dict[str, dict] = {}
@@ -221,8 +294,6 @@ class FinTsClient:
 
 
 class FinTsAccount(SensorEntity):
-    """Saldo-Sensor pro Konto."""
-
     def __init__(self, client: FinTsClient, account: SEPAAccount, name: str) -> None:
         self._client = client
         self._account = account
@@ -249,11 +320,13 @@ class FinTsAccount(SensorEntity):
 
 
 class FinTsMonthlyExpensesSensor(SensorEntity):
-    """Monatliche Ausgaben inkl. verknüpfter Receipt-Details (per Betrag)."""
+    """Monatliche Ausgaben inkl. Receipt-Details aus SQL oder JSON."""
 
-    def __init__(self, client: FinTsClient, account: SEPAAccount, name: str, exclude_filter: list[str] | None = None) -> None:
+    def __init__(self, client: FinTsClient, account: SEPAAccount, name: str, cfg: ConfigType, exclude_filter: list[str] | None = None) -> None:
         self._client = client
         self._account = account
+        self._cfg = cfg
+        self._use_db = cfg.get(CONF_USE_DB, False)
         self._attr_name = f"{name} Monthly Expenses"
         self._attr_icon = "mdi:cash-minus"
         self._attr_native_unit_of_measurement = "EUR"
@@ -269,10 +342,7 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
     def update(self) -> None:
         today = date.today()
         first_day = today.replace(day=1)
-        if today.month == 12:
-            last_day = date(today.year + 1, 1, 1) - timedelta(days=1)
-        else:
-            last_day = date(today.year, today.month + 1, 1) - timedelta(days=1)
+        last_day = date(today.year + (today.month // 12), ((today.month % 12) + 1), 1) - timedelta(days=1)
 
         try:
             transactions = self._client.client.get_transactions(self._account, first_day, today, True)
@@ -283,83 +353,56 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 data = getattr(tx, "data", None)
                 if not data:
                     continue
-
                 amount_obj = data.get("amount")
                 if not amount_obj:
                     continue
-
                 try:
                     amount = float(str(amount_obj.amount))
                 except Exception:
                     continue
+                if amount >= 0:
+                    continue  # nur Ausgaben
 
                 currency = getattr(amount_obj, "currency", "EUR")
                 purpose = (data.get("purpose") or "").strip()
                 applicant_name = (data.get("applicant_name") or "").strip()
-
-                # Datum immer aus dem Betreff (purpose) extrahieren
-                date_str = None
-                m = re.search(r"(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?", purpose)
-                if m:
-                    d, mth, yr = m.group(1), m.group(2), m.group(3)
+                date_val = data.get("date") or data.get("valutadate") or today
+                if isinstance(date_val, str):
                     try:
-                        yr = int(yr) if yr else today.year
-                        dt = date(yr, int(mth), int(d))
-                        date_str = dt.strftime("%Y-%m-%d")
-                    except ValueError:
-                        date_str = None
-                else:
-                    # Fallback auf Transaktionsdatum
-                    date_val = data.get("date") or data.get("valutadate")
-                    if isinstance(date_val, (datetime, date)):
-                        date_str = date_val.strftime("%Y-%m-%d")
-                    elif isinstance(date_val, str) and re.match(r"\d{4}-\d{2}-\d{2}", date_val):
-                        date_str = date_val
+                        date_val = datetime.fromisoformat(date_val).date()
+                    except Exception:
+                        continue
 
-                if not date_str:
+                if not (first_day <= date_val <= last_day):
                     continue
-
-                # Nur Transaktionen innerhalb des Monats
-                try:
-                    tx_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                except Exception:
-                    continue
-                if not (first_day <= tx_date <= last_day):
-                    continue
-
-                # Ausschlussfilter prüfen
                 if any(ex.lower() in (purpose + applicant_name).lower() for ex in self._exclude_filter):
                     continue
 
-                if amount < 0:
-                    total += amount
-                    receipt = _find_receipt_for(abs(amount))
+                total += amount
+                receipt = _find_receipt_for(abs(amount), date_val, self._use_db, self._cfg)
 
-                    parsed_tx: dict[str, Any] = {
-                        "date": date_str,
-                        "amount": abs(amount),
-                        "currency": currency,
-                        "name": applicant_name or "Unbekannt",
-                        "purpose": purpose[:120],
-                    }
+                parsed_tx: dict[str, Any] = {
+                    "date": date_val.isoformat(),
+                    "amount": abs(amount),
+                    "currency": currency,
+                    "name": applicant_name or "Unbekannt",
+                    "purpose": purpose[:120],
+                }
 
-                    if receipt:
-                        parsed_tx["store"] = receipt.get("store")
-                        parsed_tx["items"] = receipt.get("items", [])
-                        parsed_tx["file"] = receipt.get("file")
-                    else:
-                        parsed_tx["store"] = None
-                        parsed_tx["items"] = []
-                        parsed_tx["file"] = None
+                if receipt:
+                    parsed_tx["store"] = receipt.get("store")
+                    parsed_tx["items"] = receipt.get("items", [])
+                    parsed_tx["file"] = receipt.get("file")
+                else:
+                    parsed_tx["store"] = None
+                    parsed_tx["items"] = []
+                    parsed_tx["file"] = None
 
-                    parsed_transactions.append(parsed_tx)
+                parsed_transactions.append(parsed_tx)
 
             self._attr_native_value = abs(total)
             self._attr_extra_state_attributes.update(
-                {
-                    "transaction_count": len(parsed_transactions),
-                    "transactions": parsed_transactions,
-                }
+                {"transaction_count": len(parsed_transactions), "transactions": parsed_transactions}
             )
 
         except Exception as e:
@@ -368,8 +411,6 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
 
 
 class FinTsHoldingsAccount(SensorEntity):
-    """Depot-/Holdings-Sensor."""
-
     def __init__(self, client: FinTsClient, account: SEPAAccount, name: str) -> None:
         self._client = client
         self._attr_name = name
