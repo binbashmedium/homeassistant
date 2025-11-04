@@ -10,6 +10,6 @@
   "requirements": [
     "fints==4.2.4",
     "Pillow",
-    "pymymsql"
+    "pymysql"
   ]
 }
