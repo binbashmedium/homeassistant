@@ -23,7 +23,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 import json
-import re
 import pymysql
 from pathlib import Path
 
@@ -342,7 +341,11 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
     def update(self) -> None:
         today = date.today()
         first_day = today.replace(day=1)
-        last_day = date(today.year + (today.month // 12), ((today.month % 12) + 1), 1) - timedelta(days=1)
+        # Letzter Tag des Monats
+        if today.month == 12:
+            last_day = date(today.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            last_day = date(today.year, today.month + 1, 1) - timedelta(days=1)
 
         try:
             transactions = self._client.client.get_transactions(self._account, first_day, today, True)
@@ -366,19 +369,26 @@ class FinTsMonthlyExpensesSensor(SensorEntity):
                 currency = getattr(amount_obj, "currency", "EUR")
                 purpose = (data.get("purpose") or "").strip()
                 applicant_name = (data.get("applicant_name") or "").strip()
-                date_val = data.get("date") or data.get("valutadate") or today
+                date_val = data.get("date") or data.get("valutadate")
                 if isinstance(date_val, str):
                     try:
                         date_val = datetime.fromisoformat(date_val).date()
                     except Exception:
                         continue
+                elif not isinstance(date_val, date):
+                    date_val = today
 
+                # Nur Transaktionen innerhalb des aktuellen Monats
                 if not (first_day <= date_val <= last_day):
                     continue
+
+                # Ausschlussfilter
                 if any(ex.lower() in (purpose + applicant_name).lower() for ex in self._exclude_filter):
                     continue
 
                 total += amount
+
+                # Belegsuche mit Monats- und Betragsabgleich
                 receipt = _find_receipt_for(abs(amount), date_val, self._use_db, self._cfg)
 
                 parsed_tx: dict[str, Any] = {
